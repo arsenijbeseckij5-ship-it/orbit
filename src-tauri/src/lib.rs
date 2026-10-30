@@ -68,6 +68,7 @@ pub fn run() {
             commands::pause_torrent,
             commands::resume_torrent,
             commands::remove_torrent,
+            commands::remove_torrent_and_files,
             commands::open_torrent_folder
         ])
         .run(tauri::generate_context!())

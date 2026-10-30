@@ -218,14 +218,16 @@ pub async fn resume_torrent(state: State<'_, AppState>, id: usize) -> Result<(),
         .map_err(|error| format!("Не удалось возобновить торрент: {error}"))
 }
 
-#[tauri::command(rename_all = "snake_case")]
-pub async fn remove_torrent(
-    state: State<'_, AppState>,
-    id: usize,
-    remove_files: bool,
-) -> Result<(), String> {
+#[tauri::command]
+pub async fn remove_torrent(state: State<'_, AppState>, id: usize) -> Result<(), String> {
     let api = state.api().await?;
-    remove_torrent_from_api(api, id, remove_files).await
+    remove_torrent_from_api(api, id, false).await
+}
+
+#[tauri::command]
+pub async fn remove_torrent_and_files(state: State<'_, AppState>, id: usize) -> Result<(), String> {
+    let api = state.api().await?;
+    remove_torrent_from_api(api, id, true).await
 }
 
 async fn remove_torrent_from_api(api: &Api, id: usize, remove_files: bool) -> Result<(), String> {
@@ -543,14 +545,57 @@ mod tests {
         .unwrap();
         assert_eq!(resumed.status, "downloading");
 
+        let details = api
+            .api_torrent_details(TorrentIdOrHash::Id(row.id))
+            .unwrap();
+        let payload_file = details
+            .files
+            .as_ref()
+            .and_then(|files| files.first())
+            .expect("generated torrent should expose its payload file");
+        let payload_path =
+            torrent_file_path(Path::new(&details.output_folder), &payload_file.components).unwrap();
+        tokio::fs::create_dir_all(payload_path.parent().unwrap())
+            .await
+            .unwrap();
+        tokio::fs::write(&payload_path, b"torrent payload")
+            .await
+            .unwrap();
+
         remove_torrent_from_api(&api, row.id, true).await.unwrap();
         assert!(
-            !downloads.join("source").join("payload.bin").exists(),
+            !payload_path.exists(),
             "deleting torrent data should remove its payload on Windows"
         );
         assert!(
             keep_file.exists(),
             "deleting torrent data must preserve unrelated files in its output folder"
+        );
+
+        let readded = api
+            .api_add_torrent(
+                AddTorrent::from_bytes(torrent.as_bytes().unwrap()),
+                Some(AddTorrentOptions {
+                    output_folder: Some(downloads.to_string_lossy().into_owned()),
+                    ..AddTorrentOptions::default()
+                }),
+            )
+            .await
+            .unwrap();
+        tokio::fs::write(&payload_path, b"preserved payload")
+            .await
+            .unwrap();
+        remove_torrent_from_api(&api, readded.id.unwrap(), false)
+            .await
+            .unwrap();
+        assert!(
+            payload_path.exists(),
+            "removing a torrent from the queue must preserve its payload"
+        );
+        assert_eq!(
+            tokio::fs::read(&payload_path).await.unwrap(),
+            b"preserved payload",
+            "removing a torrent from the queue must not alter its payload"
         );
         assert!(
             api.api_torrent_list_ext(ApiTorrentListOpts { with_stats: true })
