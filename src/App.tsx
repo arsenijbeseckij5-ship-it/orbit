@@ -255,18 +255,29 @@ export default function App() {
       return;
     }
     setBusy(true);
+    const errors: string[] = [];
     try {
-      await Promise.all(
-        selected.map((torrent) => removeTorrent(torrent.id, removeFiles)),
-      );
+      for (const torrent of selected) {
+        try {
+          await removeTorrent(torrent.id, removeFiles);
+        } catch (error) {
+          errors.push(
+            `${torrent.name}: ${error instanceof Error ? error.message : String(error)}`,
+          );
+        }
+      }
       setSelectedIds(new Set());
       setSelectedTorrent(null);
       await refresh();
-      notify(
-        removeFiles
-          ? "Торренты и их файлы удалены."
-          : "Торренты удалены, файлы сохранены.",
-      );
+      if (errors.length > 0) {
+        notify(`Не все торренты удалось удалить:\n${errors.join("\n")}`, "error");
+      } else {
+        notify(
+          removeFiles
+            ? "Торренты и их файлы удалены."
+            : "Торренты удалены, файлы сохранены.",
+        );
+      }
     } catch (error) {
       notify(error instanceof Error ? error.message : String(error), "error");
     } finally {
@@ -334,7 +345,19 @@ export default function App() {
       await refresh();
       notify(removeFiles ? "Торрент и его файлы удалены." : "Торрент удалён, файлы сохранены.");
     } catch (error) {
-      notify(error instanceof Error ? error.message : String(error), "error");
+      const message = error instanceof Error ? error.message : String(error);
+      try {
+        await refresh();
+      } catch (refreshError) {
+        notify(
+          `${message}\nНе удалось обновить очередь: ${
+            refreshError instanceof Error ? refreshError.message : String(refreshError)
+          }`,
+          "error",
+        );
+        return;
+      }
+      notify(message, "error");
     } finally {
       setBusy(false);
     }

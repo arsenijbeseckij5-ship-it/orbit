@@ -27,6 +27,7 @@ src-tauri/
 - View engine-reported progress, transfer rates, ETA, completion, and errors.
 - Plot live aggregate download and upload rates at the bottom of the window (green for downloads, blue for uploads).
 - Pause, resume, and remove torrents. Removing torrent data is a separate, confirmed action.
+- Delete torrent files after releasing the engine's file handles, while preserving unrelated files in the download folder.
 - Open a torrent's download folder from its right-click menu.
 - Persist the engine session between launches and choose a download folder.
 - Drop `.torrent` files onto the app window.
