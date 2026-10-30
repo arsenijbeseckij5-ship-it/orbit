@@ -50,7 +50,7 @@ export function removeTorrent(
   id: number,
   removeFiles: boolean,
 ): Promise<void> {
-  return invoke("remove_torrent", { id, removeFiles });
+  return invoke("remove_torrent", { id, remove_files: removeFiles });
 }
 
 export function openTorrentFolder(id: number): Promise<void> {

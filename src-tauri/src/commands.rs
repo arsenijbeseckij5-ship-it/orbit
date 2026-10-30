@@ -218,7 +218,7 @@ pub async fn resume_torrent(state: State<'_, AppState>, id: usize) -> Result<(),
         .map_err(|error| format!("Не удалось возобновить торрент: {error}"))
 }
 
-#[tauri::command]
+#[tauri::command(rename_all = "snake_case")]
 pub async fn remove_torrent(
     state: State<'_, AppState>,
     id: usize,
