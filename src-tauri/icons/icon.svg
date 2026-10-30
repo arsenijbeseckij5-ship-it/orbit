@@ -9,9 +9,11 @@
       <stop offset="1" stop-color="#42a9d2"/>
     </linearGradient>
   </defs>
-  <rect x="64" y="64" width="896" height="896" rx="226" fill="url(#background)"/>
-  <circle cx="512" cy="512" r="248" fill="none" stroke="url(#orbit)" stroke-width="24" transform="rotate(-35 512 512)"/>
-  <ellipse cx="512" cy="512" rx="334" ry="122" fill="none" stroke="#61c9e8" stroke-opacity=".72" stroke-width="18" transform="rotate(-35 512 512)"/>
-  <path d="M512 302v150m0 20v80m0 20v150" stroke="#8beaff" stroke-linecap="round" stroke-width="27"/>
-  <circle cx="512" cy="512" r="42" fill="#c6f7ff"/>
+  <rect width="1024" height="1024" rx="220" fill="url(#background)"/>
+  <g transform="translate(512 512) scale(1.55) translate(-512 -512)">
+    <circle cx="512" cy="512" r="248" fill="none" stroke="url(#orbit)" stroke-width="24" transform="rotate(-35 512 512)"/>
+    <ellipse cx="512" cy="512" rx="334" ry="122" fill="none" stroke="#61c9e8" stroke-opacity=".72" stroke-width="18" transform="rotate(-35 512 512)"/>
+    <path d="M512 302v150m0 20v80m0 20v150" stroke="#8beaff" stroke-linecap="round" stroke-width="27"/>
+    <circle cx="512" cy="512" r="42" fill="#c6f7ff"/>
+  </g>
 </svg>

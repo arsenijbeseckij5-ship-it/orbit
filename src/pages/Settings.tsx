@@ -1,6 +1,16 @@
-import { ArrowLeft, FolderOpen, HardDriveDownload } from "lucide-react";
+import {
+  ArrowLeft,
+  Clipboard,
+  FolderOpen,
+  HardDriveDownload,
+  RotateCcw,
+} from "lucide-react";
 import { useState } from "react";
-import { chooseDownloadFolder } from "../services/torrentService";
+import {
+  chooseDownloadFolder,
+  defaultDownloadFolder,
+  openDownloadFolder,
+} from "../services/torrentService";
 
 interface SettingsProps {
   initialDownloadFolder: string;
@@ -23,6 +33,46 @@ export function Settings({
       if (selected) setFolder(selected);
     } catch (error) {
       notify(error instanceof Error ? error.message : String(error), "error");
+    }
+  }
+
+  async function restoreDefaultFolder() {
+    try {
+      setFolder(await defaultDownloadFolder());
+      notify("Папка по умолчанию подставлена. Нажмите «Сохранить настройки», чтобы применить её.");
+    } catch (error) {
+      notify(error instanceof Error ? error.message : String(error), "error");
+    }
+  }
+
+  async function openFolder() {
+    const trimmed = folder.trim();
+    if (!trimmed) {
+      notify("Сначала укажите папку загрузки.", "error");
+      return;
+    }
+    try {
+      await openDownloadFolder(trimmed);
+      notify("Папка загрузки открыта.");
+    } catch (error) {
+      notify(error instanceof Error ? error.message : String(error), "error");
+    }
+  }
+
+  async function copyFolderPath() {
+    const trimmed = folder.trim();
+    if (!trimmed) {
+      notify("Сначала укажите папку загрузки.", "error");
+      return;
+    }
+    try {
+      await navigator.clipboard.writeText(trimmed);
+      notify("Путь к папке скопирован.");
+    } catch (error) {
+      notify(
+        `Не удалось скопировать путь: ${error instanceof Error ? error.message : String(error)}`,
+        "error",
+      );
     }
   }
 
@@ -81,6 +131,34 @@ export function Settings({
           Папка создаётся при добавлении торрента. Уже добавленные загрузки
           останутся в выбранных для них папках.
         </p>
+        <div className="settings-folder-actions">
+          <button
+            className="button button-outline"
+            disabled={!folder.trim()}
+            onClick={() => void openFolder()}
+            type="button"
+          >
+            <FolderOpen size={15} />
+            Открыть папку
+          </button>
+          <button
+            className="button button-outline"
+            disabled={!folder.trim()}
+            onClick={() => void copyFolderPath()}
+            type="button"
+          >
+            <Clipboard size={15} />
+            Копировать путь
+          </button>
+          <button
+            className="button button-quiet"
+            onClick={() => void restoreDefaultFolder()}
+            type="button"
+          >
+            <RotateCcw size={15} />
+            По умолчанию
+          </button>
+        </div>
         <div className="settings-divider" />
         <div className="settings-note">
           <span className="note-dot" />

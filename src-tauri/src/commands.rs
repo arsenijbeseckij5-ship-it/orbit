@@ -1,8 +1,10 @@
+use std::collections::HashSet;
 use std::path::{Path, PathBuf};
+use std::process::Command;
 
 use librqbit::{
     AddTorrent, AddTorrentOptions, Api, TorrentStatsState,
-    api::{ApiTorrentListOpts, TorrentIdOrHash},
+    api::{ApiTorrentListOpts, TorrentDetailsResponseFile, TorrentIdOrHash},
 };
 use serde::Serialize;
 use tauri::State;
@@ -217,20 +219,197 @@ pub async fn resume_torrent(state: State<'_, AppState>, id: usize) -> Result<(),
 }
 
 #[tauri::command]
-pub async fn remove_torrent(
-    state: State<'_, AppState>,
-    id: usize,
-    remove_files: bool,
-) -> Result<(), String> {
+pub async fn remove_torrent(state: State<'_, AppState>, id: usize) -> Result<(), String> {
     let api = state.api().await?;
-    let result = if remove_files {
-        api.api_torrent_action_delete(TorrentIdOrHash::Id(id)).await
+    remove_torrent_from_api(api, id, false).await
+}
+
+#[tauri::command]
+pub async fn remove_torrent_and_files(state: State<'_, AppState>, id: usize) -> Result<(), String> {
+    let api = state.api().await?;
+    remove_torrent_from_api(api, id, true).await
+}
+
+async fn remove_torrent_from_api(api: &Api, id: usize, remove_files: bool) -> Result<(), String> {
+    let details = if remove_files {
+        Some(
+            api.api_torrent_details(TorrentIdOrHash::Id(id))
+                .map_err(|error| {
+                    format!("Не удалось получить список файлов торрента: {error:#}")
+                })?,
+        )
     } else {
-        api.api_torrent_action_forget(TorrentIdOrHash::Id(id)).await
+        None
     };
-    result
+
+    api.api_torrent_action_forget(TorrentIdOrHash::Id(id))
+        .await
         .map(|_| ())
-        .map_err(|error| format!("Не удалось удалить торрент: {error}"))
+        .map_err(|error| format!("Не удалось удалить торрент из очереди: {error:#}"))?;
+
+    if let Some(details) = details {
+        delete_torrent_files(
+            &PathBuf::from(details.output_folder),
+            details.files.as_deref().unwrap_or(&[]),
+        )
+        .await?;
+    }
+
+    Ok(())
+}
+
+fn torrent_file_path(root: &Path, components: &[String]) -> Result<PathBuf, String> {
+    if components.is_empty()
+        || components.iter().any(|component| {
+            let mut path_components = Path::new(component).components();
+            !matches!(
+                path_components.next(),
+                Some(std::path::Component::Normal(_))
+            ) || path_components.next().is_some()
+        })
+    {
+        return Err("Метаданные торрента содержат небезопасный путь к файлу.".to_owned());
+    }
+
+    let path = components
+        .iter()
+        .fold(root.to_path_buf(), |path, component| path.join(component));
+    if !path.starts_with(root) {
+        return Err("Путь файла выходит за пределы папки торрента.".to_owned());
+    }
+    Ok(path)
+}
+
+async fn delete_torrent_files(
+    output_folder: &Path,
+    files: &[TorrentDetailsResponseFile],
+) -> Result<(), String> {
+    let root = match tokio::fs::canonicalize(output_folder).await {
+        Ok(root) => root,
+        Err(error) if error.kind() == std::io::ErrorKind::NotFound => return Ok(()),
+        Err(error) => {
+            return Err(format!(
+                "Торрент удалён из очереди, но не удалось открыть папку с файлами: {error}"
+            ));
+        }
+    };
+    let mut directories = HashSet::new();
+
+    for file in files.iter().filter(|file| !file.attributes.padding) {
+        let path = torrent_file_path(output_folder, &file.components)?;
+        let Some(parent) = path.parent() else {
+            continue;
+        };
+        let canonical_parent = match tokio::fs::canonicalize(parent).await {
+            Ok(parent) => parent,
+            Err(error) if error.kind() == std::io::ErrorKind::NotFound => continue,
+            Err(error) => {
+                return Err(format!(
+                    "Торрент удалён из очереди, но не удалось проверить путь файла {}: {error}",
+                    path.display()
+                ));
+            }
+        };
+        if !canonical_parent.starts_with(&root) {
+            return Err(format!(
+                "Торрент удалён из очереди, но файл {} находится за пределами папки загрузки; файл оставлен на месте.",
+                path.display()
+            ));
+        }
+
+        match tokio::fs::remove_file(&path).await {
+            Ok(()) => {}
+            Err(error) if error.kind() == std::io::ErrorKind::NotFound => continue,
+            Err(error) => {
+                return Err(format!(
+                    "Торрент удалён из очереди, но файл {} не удалось удалить: {error}. Закройте файл и удалите его вручную.",
+                    path.display()
+                ));
+            }
+        }
+
+        let mut directory = parent;
+        while directory != output_folder && directory.starts_with(output_folder) {
+            directories.insert(directory.to_path_buf());
+            let Some(parent) = directory.parent() else {
+                break;
+            };
+            directory = parent;
+        }
+    }
+
+    let mut directories = directories.into_iter().collect::<Vec<_>>();
+    directories.sort_unstable_by_key(|path| std::cmp::Reverse(path.components().count()));
+    for directory in directories {
+        let canonical = match tokio::fs::canonicalize(&directory).await {
+            Ok(path) => path,
+            Err(error) if error.kind() == std::io::ErrorKind::NotFound => continue,
+            Err(error) => {
+                return Err(format!(
+                    "Торрент удалён из очереди и файлы удалены, но не удалось проверить папку {}: {error}",
+                    directory.display()
+                ));
+            }
+        };
+        if !canonical.starts_with(&root) {
+            continue;
+        }
+        match tokio::fs::remove_dir(&directory).await {
+            Ok(()) => {}
+            Err(error)
+                if matches!(
+                    error.kind(),
+                    std::io::ErrorKind::NotFound | std::io::ErrorKind::DirectoryNotEmpty
+                ) => {}
+            Err(error) => {
+                return Err(format!(
+                    "Торрент удалён из очереди и файлы удалены, но не удалось убрать папку {}: {error}",
+                    directory.display()
+                ));
+            }
+        }
+    }
+
+    Ok(())
+}
+
+#[tauri::command]
+pub async fn open_torrent_folder(state: State<'_, AppState>, id: usize) -> Result<(), String> {
+    let torrent = state
+        .api()
+        .await?
+        .api_torrent_details(TorrentIdOrHash::Id(id))
+        .map_err(|error| format!("Не удалось найти папку торрента: {error:#}"))?;
+    let folder = PathBuf::from(torrent.output_folder);
+    if !folder.is_dir() {
+        return Err(format!(
+            "Папка загрузки ещё не создана: {}",
+            folder.display()
+        ));
+    }
+
+    Command::new("explorer.exe")
+        .arg(&folder)
+        .spawn()
+        .map(|_| ())
+        .map_err(|error| format!("Не удалось открыть папку загрузки: {error}"))
+}
+
+#[tauri::command]
+pub fn open_download_folder(folder: String) -> Result<(), String> {
+    let folder = PathBuf::from(folder);
+    if !folder.is_absolute() {
+        return Err("Папка загрузки должна быть абсолютным путём.".to_owned());
+    }
+    if !folder.is_dir() {
+        return Err(format!("Папка загрузки не найдена: {}", folder.display()));
+    }
+
+    Command::new("explorer.exe")
+        .arg(&folder)
+        .spawn()
+        .map(|_| ())
+        .map_err(|error| format!("Не удалось открыть папку загрузки: {error}"))
 }
 
 #[cfg(test)]
@@ -268,6 +447,14 @@ mod tests {
         );
     }
 
+    #[test]
+    fn rejects_torrent_file_paths_that_escape_the_output_folder() {
+        let root = Path::new(r"C:\Downloads");
+        assert!(torrent_file_path(root, &["..".to_owned(), "outside.txt".to_owned()]).is_err());
+        assert!(torrent_file_path(root, &["folder\\outside.txt".to_owned()]).is_err());
+        assert!(torrent_file_path(root, &["C:outside.txt".to_owned()]).is_err());
+    }
+
     #[tokio::test]
     async fn local_torrent_can_be_added_listed_paused_and_resumed() {
         let root = std::env::temp_dir().join(format!(
@@ -282,6 +469,13 @@ mod tests {
         let downloads = root.join("downloads");
         tokio::fs::create_dir_all(&source).await.unwrap();
         tokio::fs::write(source.join("payload.bin"), b"verified local torrent")
+            .await
+            .unwrap();
+        let keep_file = downloads.join("source").join("keep.txt");
+        tokio::fs::create_dir_all(keep_file.parent().unwrap())
+            .await
+            .unwrap();
+        tokio::fs::write(&keep_file, b"not part of the torrent")
             .await
             .unwrap();
 
@@ -368,9 +562,64 @@ mod tests {
         .unwrap();
         assert_eq!(resumed.status, "downloading");
 
-        api.api_torrent_action_forget(TorrentIdOrHash::Id(row.id))
+        let details = api
+            .api_torrent_details(TorrentIdOrHash::Id(row.id))
+            .unwrap();
+        let payload_file = details
+            .files
+            .as_ref()
+            .and_then(|files| files.first())
+            .expect("generated torrent should expose its payload file");
+        let payload_path =
+            torrent_file_path(Path::new(&details.output_folder), &payload_file.components).unwrap();
+        tokio::fs::create_dir_all(payload_path.parent().unwrap())
             .await
             .unwrap();
+        tokio::fs::write(&payload_path, b"torrent payload")
+            .await
+            .unwrap();
+
+        remove_torrent_from_api(&api, row.id, true).await.unwrap();
+        assert!(
+            !payload_path.exists(),
+            "deleting torrent data should remove its payload on Windows"
+        );
+        assert!(
+            keep_file.exists(),
+            "deleting torrent data must preserve unrelated files in its output folder"
+        );
+
+        let readded = api
+            .api_add_torrent(
+                AddTorrent::from_bytes(torrent.as_bytes().unwrap()),
+                Some(AddTorrentOptions {
+                    output_folder: Some(downloads.to_string_lossy().into_owned()),
+                    ..AddTorrentOptions::default()
+                }),
+            )
+            .await
+            .unwrap();
+        tokio::fs::write(&payload_path, b"preserved payload")
+            .await
+            .unwrap();
+        remove_torrent_from_api(&api, readded.id.unwrap(), false)
+            .await
+            .unwrap();
+        assert!(
+            payload_path.exists(),
+            "removing a torrent from the queue must preserve its payload"
+        );
+        assert_eq!(
+            tokio::fs::read(&payload_path).await.unwrap(),
+            b"preserved payload",
+            "removing a torrent from the queue must not alter its payload"
+        );
+        assert!(
+            api.api_torrent_list_ext(ApiTorrentListOpts { with_stats: true })
+                .torrents
+                .is_empty(),
+            "deleted torrent should no longer appear in the session"
+        );
         session.stop().await;
         tokio::fs::remove_dir_all(root).await.unwrap();
     }

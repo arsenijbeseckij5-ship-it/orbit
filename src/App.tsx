@@ -16,6 +16,7 @@ import {
 } from "lucide-react";
 import { useCallback, useEffect, useMemo, useState } from "react";
 import { AddMagnetDialog } from "./components/AddMagnetDialog";
+import { SpeedChart } from "./components/SpeedChart";
 import { Sidebar, type ViewFilter } from "./components/Sidebar";
 import { Toolbar } from "./components/Toolbar";
 import { TorrentTable } from "./components/TorrentTable";
@@ -26,6 +27,7 @@ import {
   defaultDownloadFolder,
   isDesktopRuntime,
   listTorrents,
+  openTorrentFolder,
   pauseTorrent,
   removeTorrent,
   resumeTorrent,
@@ -253,18 +255,29 @@ export default function App() {
       return;
     }
     setBusy(true);
+    const errors: string[] = [];
     try {
-      await Promise.all(
-        selected.map((torrent) => removeTorrent(torrent.id, removeFiles)),
-      );
+      for (const torrent of selected) {
+        try {
+          await removeTorrent(torrent.id, removeFiles);
+        } catch (error) {
+          errors.push(
+            `${torrent.name}: ${error instanceof Error ? error.message : String(error)}`,
+          );
+        }
+      }
       setSelectedIds(new Set());
       setSelectedTorrent(null);
       await refresh();
-      notify(
-        removeFiles
-          ? "Торренты и их файлы удалены."
-          : "Торренты удалены, файлы сохранены.",
-      );
+      if (errors.length > 0) {
+        notify(`Не все торренты удалось удалить:\n${errors.join("\n")}`, "error");
+      } else {
+        notify(
+          removeFiles
+            ? "Торренты и их файлы удалены."
+            : "Торренты удалены, файлы сохранены.",
+        );
+      }
     } catch (error) {
       notify(error instanceof Error ? error.message : String(error), "error");
     } finally {
@@ -288,6 +301,66 @@ export default function App() {
 
   function selectTorrent(torrent: Torrent) {
     setSelectedTorrent(torrent);
+  }
+
+  async function toggleTorrent(torrent: Torrent) {
+    setBusy(true);
+    try {
+      await (torrent.status === "paused"
+        ? resumeTorrent(torrent.id)
+        : pauseTorrent(torrent.id));
+      await refresh();
+      notify(torrent.status === "paused" ? "Загрузка возобновлена." : "Загрузка приостановлена.");
+    } catch (error) {
+      notify(error instanceof Error ? error.message : String(error), "error");
+    } finally {
+      setBusy(false);
+    }
+  }
+
+  async function openFolder(torrent: Torrent) {
+    try {
+      await openTorrentFolder(torrent.id);
+    } catch (error) {
+      notify(error instanceof Error ? error.message : String(error), "error");
+    }
+  }
+
+  async function removeTorrentFromMenu(torrent: Torrent) {
+    const removeFiles = window.confirm(
+      `Удалить файлы торрента «${torrent.name}» вместе с записью в очереди?\n\nНажмите «ОК», чтобы удалить файлы, или «Отмена», чтобы сохранить их.`,
+    );
+    if (!window.confirm(`Удалить «${torrent.name}» из очереди${removeFiles ? " и удалить файлы" : ", сохранив файлы"}?`)) {
+      return;
+    }
+    setBusy(true);
+    try {
+      await removeTorrent(torrent.id, removeFiles);
+      setSelectedIds((current) => {
+        const next = new Set(current);
+        next.delete(torrent.id);
+        return next;
+      });
+      setSelectedTorrent((current) => current?.id === torrent.id ? null : current);
+      await refresh();
+      notify(removeFiles ? "Торрент и его файлы удалены." : "Торрент удалён, файлы сохранены.");
+    } catch (error) {
+      const message = error instanceof Error ? error.message : String(error);
+      try {
+        await refresh();
+      } catch (refreshError) {
+        notify(
+          `${message}\nНе удалось обновить очередь: ${
+            refreshError instanceof Error ? refreshError.message : String(refreshError)
+          }`,
+          "error",
+        );
+        return;
+      }
+      notify(message, "error");
+    } finally {
+      setBusy(false);
+    }
   }
 
   const selectedDetailsTorrent =
@@ -380,6 +453,10 @@ export default function App() {
                 <TorrentTable
                   onSelect={selectTorrent}
                   onSelectionChange={setSelectedIds}
+                  onToggleTorrent={(torrent) => void toggleTorrent(torrent)}
+                  onOpenFolder={(torrent) => void openFolder(torrent)}
+                  onRemoveTorrent={(torrent) => void removeTorrentFromMenu(torrent)}
+                  actionsDisabled={!runtimeAvailable || busy}
                   selectedIds={selectedIds}
                   torrents={visibleTorrents}
                 />
@@ -531,6 +608,11 @@ export default function App() {
                 <ActivityIcon />
                 <span>{totals.active} активных</span>
               </div>
+              <SpeedChart
+                downloadSpeed={totals.download}
+                enabled={runtimeAvailable && !engineError}
+                uploadSpeed={totals.upload}
+              />
               <div className="status-bar-spacer" />
               <div className="status-engine">
                 <span className={`status-engine-dot ${engineError ? "error" : ""}`} />

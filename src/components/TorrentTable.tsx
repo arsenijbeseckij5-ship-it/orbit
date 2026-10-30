@@ -4,9 +4,13 @@ import {
   CircleAlert,
   FileArchive,
   FileVideo2,
+  FolderOpen,
   Pause,
+  Play,
+  Trash2,
 } from "lucide-react";
-import { useMemo, useState } from "react";
+import { createPortal } from "react-dom";
+import { useEffect, useMemo, useRef, useState } from "react";
 import type { Torrent } from "../types/torrent";
 
 export type SortColumn = "name" | "status" | "progress" | "speed" | "eta";
@@ -16,6 +20,16 @@ interface TorrentTableProps {
   selectedIds: Set<number>;
   onSelectionChange: (ids: Set<number>) => void;
   onSelect: (torrent: Torrent) => void;
+  onToggleTorrent: (torrent: Torrent) => void;
+  onOpenFolder: (torrent: Torrent) => void;
+  onRemoveTorrent: (torrent: Torrent) => void;
+  actionsDisabled: boolean;
+}
+
+interface ContextMenuState {
+  torrent: Torrent;
+  x: number;
+  y: number;
 }
 
 function formatBytes(bytes: number): string {
@@ -65,9 +79,63 @@ export function TorrentTable({
   selectedIds,
   onSelectionChange,
   onSelect,
+  onToggleTorrent,
+  onOpenFolder,
+  onRemoveTorrent,
+  actionsDisabled,
 }: TorrentTableProps) {
   const [sortColumn, setSortColumn] = useState<SortColumn>("name");
   const [sortAscending, setSortAscending] = useState(true);
+  const [contextMenu, setContextMenu] = useState<ContextMenuState | null>(null);
+  const contextMenuRef = useRef<HTMLDivElement>(null);
+  const contextTriggerRef = useRef<HTMLElement | null>(null);
+
+  useEffect(() => {
+    if (!contextMenu) return;
+    const closeOnOutsideClick = (event: PointerEvent) => {
+      if (!contextMenuRef.current?.contains(event.target as Node)) {
+        setContextMenu(null);
+      }
+    };
+    document.addEventListener("pointerdown", closeOnOutsideClick);
+    contextMenuRef.current?.querySelector<HTMLButtonElement>("button")?.focus();
+    return () => {
+      document.removeEventListener("pointerdown", closeOnOutsideClick);
+    };
+  }, [contextMenu]);
+
+  function showContextMenu(torrent: Torrent, x: number, y: number, trigger: HTMLElement) {
+    contextTriggerRef.current = trigger;
+    const width = 228;
+    const height = 148;
+    setContextMenu({
+      torrent,
+      x: Math.max(8, Math.min(x, window.innerWidth - width - 8)),
+      y: Math.max(8, Math.min(y, window.innerHeight - height - 8)),
+    });
+    onSelectionChange(new Set([torrent.id]));
+    onSelect(torrent);
+  }
+
+  function handleMenuKeyDown(event: React.KeyboardEvent<HTMLDivElement>) {
+    const items = [
+      ...(contextMenuRef.current?.querySelectorAll<HTMLButtonElement>("button") ?? []),
+    ];
+    const currentIndex = items.indexOf(document.activeElement as HTMLButtonElement);
+    let nextIndex: number | null = null;
+    if (event.key === "ArrowDown") nextIndex = (currentIndex + 1) % items.length;
+    if (event.key === "ArrowUp") nextIndex = (currentIndex - 1 + items.length) % items.length;
+    if (event.key === "Home") nextIndex = 0;
+    if (event.key === "End") nextIndex = items.length - 1;
+    if (nextIndex !== null) {
+      event.preventDefault();
+      items[nextIndex]?.focus();
+    } else if (event.key === "Escape") {
+      event.preventDefault();
+      setContextMenu(null);
+      contextTriggerRef.current?.focus();
+    }
+  }
 
   const sortedTorrents = useMemo(() => {
     const sorted = [...torrents].sort((a, b) => {
@@ -144,10 +212,22 @@ export function TorrentTable({
             const percent = progressPercent(torrent);
             return (
               <tr
+                aria-haspopup="menu"
                 aria-selected={selectedIds.has(torrent.id)}
                 className={`torrent-row ${selectedIds.has(torrent.id) ? "selected" : ""}`}
                 key={torrent.id}
                 onClick={(event) => toggleRow(torrent, event.metaKey || event.ctrlKey)}
+                onContextMenu={(event) => {
+                  event.preventDefault();
+                  showContextMenu(torrent, event.clientX, event.clientY, event.currentTarget);
+                }}
+                onKeyDown={(event) => {
+                  if (event.key !== "ContextMenu" && !(event.shiftKey && event.key === "F10")) return;
+                  event.preventDefault();
+                  const bounds = event.currentTarget.getBoundingClientRect();
+                  showContextMenu(torrent, bounds.left + 24, bounds.bottom, event.currentTarget);
+                }}
+                tabIndex={0}
               >
                 <td className="checkbox-column">
                   <input
@@ -240,6 +320,57 @@ export function TorrentTable({
           })}
         </tbody>
       </table>
+      {contextMenu &&
+        createPortal(
+          <div
+            aria-label={`Действия: ${contextMenu.torrent.name}`}
+            className="torrent-context-menu"
+            onKeyDown={handleMenuKeyDown}
+            ref={contextMenuRef}
+            role="menu"
+            style={{ left: contextMenu.x, top: contextMenu.y }}
+          >
+            <button
+              disabled={actionsDisabled}
+              onClick={() => {
+                setContextMenu(null);
+                onToggleTorrent(contextMenu.torrent);
+              }}
+              role="menuitem"
+              type="button"
+            >
+              {contextMenu.torrent.status === "paused" ? <Play size={14} /> : <Pause size={14} />}
+              {contextMenu.torrent.status === "paused" ? "Продолжить" : "Пауза"}
+            </button>
+            <button
+              disabled={actionsDisabled}
+              onClick={() => {
+                setContextMenu(null);
+                onOpenFolder(contextMenu.torrent);
+              }}
+              role="menuitem"
+              type="button"
+            >
+              <FolderOpen size={14} />
+              Открыть папку загрузки
+            </button>
+            <span className="context-menu-divider" role="separator" />
+            <button
+              className="danger"
+              disabled={actionsDisabled}
+              onClick={() => {
+                setContextMenu(null);
+                onRemoveTorrent(contextMenu.torrent);
+              }}
+              role="menuitem"
+              type="button"
+            >
+              <Trash2 size={14} />
+              Удалить торрент…
+            </button>
+          </div>,
+          document.body,
+        )}
     </div>
   );
 }
