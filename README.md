@@ -29,7 +29,7 @@ src-tauri/
 - Pause, resume, and remove torrents. Removing torrent data is a separate, confirmed action.
 - Delete torrent files after releasing the engine's file handles, while preserving unrelated files in the download folder.
 - Open a torrent's download folder from its right-click menu.
-- Persist the engine session between launches and choose a download folder.
+- Persist the engine session between launches; choose, open, copy, or restore the default download folder in Settings.
 - Drop `.torrent` files onto the app window.
 - Start the frontend in a browser for UI work; torrent controls require the Tauri desktop runtime.
 

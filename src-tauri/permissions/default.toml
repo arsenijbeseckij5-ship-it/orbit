@@ -10,5 +10,6 @@ commands.allow = [
   "resume_torrent",
   "remove_torrent",
   "remove_torrent_and_files",
-  "open_torrent_folder"
+  "open_torrent_folder",
+  "open_download_folder"
 ]

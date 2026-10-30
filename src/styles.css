@@ -1333,6 +1333,19 @@ textarea:focus-visible {
   flex-shrink: 0;
 }
 
+.settings-folder-actions {
+  display: flex;
+  flex-wrap: wrap;
+  gap: 8px;
+  margin-top: 12px;
+}
+
+.settings-folder-actions .button {
+  min-height: 32px;
+  padding: 0 10px;
+  font-size: 11px;
+}
+
 .field-hint {
   margin: 8px 0 0;
   color: #777f8a;

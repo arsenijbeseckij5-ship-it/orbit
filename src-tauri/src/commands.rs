@@ -395,6 +395,23 @@ pub async fn open_torrent_folder(state: State<'_, AppState>, id: usize) -> Resul
         .map_err(|error| format!("Не удалось открыть папку загрузки: {error}"))
 }
 
+#[tauri::command]
+pub fn open_download_folder(folder: String) -> Result<(), String> {
+    let folder = PathBuf::from(folder);
+    if !folder.is_absolute() {
+        return Err("Папка загрузки должна быть абсолютным путём.".to_owned());
+    }
+    if !folder.is_dir() {
+        return Err(format!("Папка загрузки не найдена: {}", folder.display()));
+    }
+
+    Command::new("explorer.exe")
+        .arg(&folder)
+        .spawn()
+        .map(|_| ())
+        .map_err(|error| format!("Не удалось открыть папку загрузки: {error}"))
+}
+
 #[cfg(test)]
 mod tests {
     use super::*;
