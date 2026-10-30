@@ -1,0 +1,20 @@
+[package]
+name = "orbit"
+version = "0.1.0"
+description = "A native BitTorrent client for Windows"
+authors = ["ORBIT"]
+edition = "2024"
+
+[lib]
+name = "orbit_lib"
+crate-type = ["staticlib", "cdylib", "rlib"]
+
+[build-dependencies]
+tauri-build = { version = "2", features = [] }
+
+[dependencies]
+librqbit = { version = "9.1.0", default-features = false, features = ["rust-tls"] }
+serde = { version = "1", features = ["derive"] }
+tauri = { version = "2", features = [] }
+tauri-plugin-dialog = "2"
+tokio = { version = "1", features = ["fs", "sync"] }
