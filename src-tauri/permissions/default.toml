@@ -1,6 +1,6 @@
 [[permission]]
 identifier = "allow-orbit-commands"
-description = "Allows the frontend to manage torrents and read the default download folder."
+description = "Allows the frontend to manage torrents, open their folders, and read the default download folder."
 commands.allow = [
   "list_torrents",
   "default_download_folder",
@@ -8,5 +8,6 @@ commands.allow = [
   "add_torrent_file",
   "pause_torrent",
   "resume_torrent",
-  "remove_torrent"
+  "remove_torrent",
+  "open_torrent_folder"
 ]

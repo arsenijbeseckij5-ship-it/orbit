@@ -12,7 +12,7 @@ ORBIT is a Windows-first BitTorrent desktop client built with Tauri 2, React, Ty
 
 ```text
 src/
-  components/  Sidebar, toolbar, torrent table, add dialog
+  components/  Sidebar, toolbar, torrent table, live speed chart, add dialog
   pages/       Download settings
   services/    Typed Tauri command client
   types/       Torrent snapshots
@@ -25,7 +25,9 @@ src-tauri/
 
 - Add Magnet links and local `.torrent` files to a real `librqbit` session.
 - View engine-reported progress, transfer rates, ETA, completion, and errors.
+- Plot live aggregate download and upload rates at the bottom of the window (green for downloads, blue for uploads).
 - Pause, resume, and remove torrents. Removing torrent data is a separate, confirmed action.
+- Open a torrent's download folder from its right-click menu.
 - Persist the engine session between launches and choose a download folder.
 - Drop `.torrent` files onto the app window.
 - Start the frontend in a browser for UI work; torrent controls require the Tauri desktop runtime.

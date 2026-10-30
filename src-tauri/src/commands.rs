@@ -1,4 +1,5 @@
 use std::path::{Path, PathBuf};
+use std::process::Command;
 
 use librqbit::{
     AddTorrent, AddTorrentOptions, Api, TorrentStatsState,
@@ -231,6 +232,28 @@ pub async fn remove_torrent(
     result
         .map(|_| ())
         .map_err(|error| format!("Не удалось удалить торрент: {error}"))
+}
+
+#[tauri::command]
+pub async fn open_torrent_folder(state: State<'_, AppState>, id: usize) -> Result<(), String> {
+    let torrent = state
+        .api()
+        .await?
+        .api_torrent_details(TorrentIdOrHash::Id(id))
+        .map_err(|error| format!("Не удалось найти папку торрента: {error:#}"))?;
+    let folder = PathBuf::from(torrent.output_folder);
+    if !folder.is_dir() {
+        return Err(format!(
+            "Папка загрузки ещё не создана: {}",
+            folder.display()
+        ));
+    }
+
+    Command::new("explorer.exe")
+        .arg(&folder)
+        .spawn()
+        .map(|_| ())
+        .map_err(|error| format!("Не удалось открыть папку загрузки: {error}"))
 }
 
 #[cfg(test)]

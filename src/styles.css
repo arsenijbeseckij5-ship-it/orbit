@@ -936,10 +936,10 @@ textarea:focus-visible {
 .status-bar {
   display: flex;
   align-items: center;
-  min-height: 43px;
+  min-height: 70px;
   margin: auto -32px 0;
-  padding: 0 33px;
-  gap: 23px;
+  padding: 8px 33px;
+  gap: 17px;
   color: #949ca6;
   background: rgba(20, 22, 26, 0.9);
   border-top: 1px solid #292d33;
@@ -958,11 +958,70 @@ textarea:focus-visible {
 }
 
 .status-metric:first-child svg {
-  color: #64c3e1;
+  color: #72c59d;
 }
 
 .status-metric:nth-child(2) svg {
+  color: #61c5e8;
+}
+
+.speed-chart {
+  display: grid;
+  flex: 0 1 240px;
+  min-width: 130px;
+  gap: 2px;
+}
+
+.speed-chart-legend {
+  display: flex;
+  gap: 12px;
+  color: #929aa5;
+  font-size: 8px;
+  white-space: nowrap;
+}
+
+.speed-chart-label.download {
   color: #72c59d;
+}
+
+.speed-chart-label.upload {
+  color: #61c5e8;
+}
+
+.speed-chart-plot {
+  display: block;
+  width: 100%;
+  overflow: visible;
+}
+
+.speed-chart-grid {
+  fill: none;
+  stroke: #353a42;
+  stroke-dasharray: 2 4;
+  stroke-width: 0.75;
+}
+
+.speed-chart-line {
+  fill: none;
+  stroke-linecap: round;
+  stroke-linejoin: round;
+  stroke-width: 1.8;
+}
+
+.speed-chart-line.download {
+  stroke: #72c59d;
+}
+
+.speed-chart-line.upload {
+  stroke: #61c5e8;
+}
+
+.speed-chart.disabled .speed-chart-legend {
+  opacity: 0.48;
+}
+
+.speed-chart.disabled .speed-chart-grid {
+  opacity: 0.4;
 }
 
 .status-separator {
@@ -996,6 +1055,67 @@ textarea:focus-visible {
 
 .details-close {
   margin-left: 2px;
+}
+
+.torrent-context-menu {
+  position: fixed;
+  z-index: 40;
+  display: grid;
+  width: 228px;
+  gap: 2px;
+  padding: 5px;
+  color: #dce1e7;
+  background: #202329;
+  border: 1px solid #3a404a;
+  border-radius: 8px;
+  box-shadow: 0 12px 36px rgba(0, 0, 0, 0.48);
+}
+
+.torrent-context-menu button {
+  display: flex;
+  align-items: center;
+  min-height: 31px;
+  gap: 9px;
+  padding: 0 9px;
+  color: #cbd1d9;
+  background: transparent;
+  border: 0;
+  border-radius: 5px;
+  cursor: pointer;
+  font-size: 10px;
+  text-align: left;
+}
+
+.torrent-context-menu button:hover:not(:disabled),
+.torrent-context-menu button:focus-visible {
+  color: #f0f3f6;
+  background: #30353d;
+}
+
+.torrent-context-menu button:disabled {
+  opacity: 0.4;
+  cursor: not-allowed;
+}
+
+.torrent-context-menu button.danger {
+  color: #e89a9a;
+}
+
+.torrent-context-menu button.danger:hover:not(:disabled),
+.torrent-context-menu button.danger:focus-visible {
+  color: #ffb0b0;
+  background: rgba(202, 71, 71, 0.13);
+}
+
+.context-menu-divider {
+  height: 1px;
+  margin: 3px 4px;
+  background: #363b44;
+}
+
+.torrent-row:focus-visible {
+  outline: 2px solid rgba(97, 197, 232, 0.75);
+  outline-offset: -2px;
 }
 
 .modal-backdrop {
@@ -1283,6 +1403,12 @@ textarea:focus-visible {
     margin-left: -22px;
     padding-right: 23px;
     padding-left: 23px;
+    gap: 11px;
+  }
+
+  .speed-chart {
+    flex-basis: 175px;
+    min-width: 110px;
   }
 
   .torrent-table th:nth-child(2) {

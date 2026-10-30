@@ -67,7 +67,8 @@ pub fn run() {
             commands::add_torrent_file,
             commands::pause_torrent,
             commands::resume_torrent,
-            commands::remove_torrent
+            commands::remove_torrent,
+            commands::open_torrent_folder
         ])
         .run(tauri::generate_context!())
         .expect("error while running ORBIT");
