@@ -936,14 +936,14 @@ textarea:focus-visible {
 .status-bar {
   display: flex;
   align-items: center;
-  min-height: 70px;
+  min-height: 104px;
   margin: auto -32px 0;
-  padding: 8px 33px;
-  gap: 17px;
+  padding: 10px 33px;
+  gap: 19px;
   color: #949ca6;
   background: rgba(20, 22, 26, 0.9);
   border-top: 1px solid #292d33;
-  font-size: 10px;
+  font-size: 11px;
 }
 
 .status-metric {
@@ -967,16 +967,17 @@ textarea:focus-visible {
 
 .speed-chart {
   display: grid;
-  flex: 0 1 240px;
-  min-width: 130px;
-  gap: 2px;
+  flex: 0 1 320px;
+  min-width: 180px;
+  gap: 5px;
 }
 
 .speed-chart-legend {
   display: flex;
-  gap: 12px;
-  color: #929aa5;
-  font-size: 8px;
+  gap: 16px;
+  color: #c0c6ce;
+  font-size: 10px;
+  font-weight: 550;
   white-space: nowrap;
 }
 
@@ -991,6 +992,7 @@ textarea:focus-visible {
 .speed-chart-plot {
   display: block;
   width: 100%;
+  height: 72px;
   overflow: visible;
 }
 
@@ -1407,8 +1409,8 @@ textarea:focus-visible {
   }
 
   .speed-chart {
-    flex-basis: 175px;
-    min-width: 110px;
+    flex-basis: 240px;
+    min-width: 160px;
   }
 
   .torrent-table th:nth-child(2) {

@@ -2,8 +2,8 @@ import { useEffect, useState } from "react";
 
 const SAMPLE_COUNT = 60;
 const SAMPLE_INTERVAL_MS = 1000;
-const CHART_WIDTH = 240;
-const CHART_HEIGHT = 38;
+const CHART_WIDTH = 320;
+const CHART_HEIGHT = 72;
 
 interface SpeedSample {
   download: number;
@@ -62,6 +62,7 @@ export function SpeedChart({ downloadSpeed, uploadSpeed, enabled }: SpeedChartPr
         }
         className="speed-chart-plot"
         height={CHART_HEIGHT}
+        preserveAspectRatio="none"
         role="img"
         viewBox={`0 0 ${CHART_WIDTH} ${CHART_HEIGHT}`}
       >
