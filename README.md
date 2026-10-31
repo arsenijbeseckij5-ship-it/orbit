@@ -31,6 +31,7 @@ src-tauri/
 - View engine-reported progress, transfer rates, ETA, completion, and errors.
 - Plot live aggregate download and upload rates at the bottom of the window (green for downloads, blue for uploads).
 - Resize the left sidebar and bottom speed chart by dragging their dividers; dimensions stay within safe limits and are remembered between launches.
+- Keep the torrent list, details, and chart in separate layout regions: enlarging the chart compresses the list instead of pushing or covering neighboring content.
 - Select all visible torrents, filter the library by incomplete, completed, paused, seeding, or error state, and clear completed entries without deleting downloaded data.
 - Pause, resume, and remove torrents. Removing torrent data is a separate, confirmed action.
 - Delete torrent files after releasing the engine's file handles, while preserving unrelated files in the download folder.
