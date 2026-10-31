@@ -28,6 +28,21 @@ function formatBytes(bytes: number): string {
   })} ${units[exponent]}`;
 }
 
+function statusLabel(status: Torrent["status"]): string {
+  switch (status) {
+    case "metadata":
+      return "Метаданные";
+    case "downloading":
+      return "Загрузка";
+    case "seeding":
+      return "Раздача";
+    case "paused":
+      return "На паузе";
+    case "error":
+      return "Ошибка";
+  }
+}
+
 export function TorrentDetails({
   torrent,
   category,
@@ -117,7 +132,7 @@ export function TorrentDetails({
           <div className="details-data">
             <div className="detail-entry">
               <span>Статус</span>
-              <strong>{torrent.status}</strong>
+              <strong>{statusLabel(torrent.status)}</strong>
             </div>
             <div className="detail-entry">
               <span>Размер</span>
