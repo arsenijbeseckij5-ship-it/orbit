@@ -14,6 +14,10 @@ export function defaultDownloadFolder(): Promise<string> {
   return invoke<string>("default_download_folder");
 }
 
+export function legacyDefaultDownloadFolder(): Promise<string> {
+  return invoke<string>("legacy_default_download_folder");
+}
+
 export function addMagnet(uri: string, outputFolder: string): Promise<void> {
   return invoke("add_magnet", { uri, outputFolder });
 }

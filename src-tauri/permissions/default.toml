@@ -4,6 +4,7 @@ description = "Allows the frontend to manage torrents, open their folders, and r
 commands.allow = [
   "list_torrents",
   "default_download_folder",
+  "legacy_default_download_folder",
   "add_magnet",
   "add_torrent_file",
   "pause_torrent",

@@ -29,7 +29,7 @@ src-tauri/
 - Pause, resume, and remove torrents. Removing torrent data is a separate, confirmed action.
 - Delete torrent files after releasing the engine's file handles, while preserving unrelated files in the download folder.
 - Open a torrent's download folder from its right-click menu.
-- Persist the engine session between launches; choose, open, copy, or restore the default download folder in Settings.
+- Persist the engine session between launches; choose, open, copy, or restore the default download folder in Settings. By default, new torrent data is stored in a `Downloads` folder beside the installed app; the previous default is migrated automatically while custom folders are kept.
 - Drop `.torrent` files onto the app window.
 - Start the frontend in a browser for UI work; torrent controls require the Tauri desktop runtime.
 
@@ -40,6 +40,8 @@ This is the first working foundation, not a feature-complete BitTorrent client. 
 ## Windows distribution
 
 The Windows x64 MSI installs ORBIT and embeds Microsoft's WebView2 offline installer. It does not need Rust, Node.js, C++ build tools, or an internet connection to install WebView2. The MSI installs per machine and can require administrator approval. The standalone `orbit.exe` is the application binary (not an installer); it needs the Microsoft Edge WebView2 Runtime to be present on the PC. Tauri statically links the Visual C++ runtime for the app, so a separate VC++ Redistributable is not required for this executable. Supported target: Windows 10/11 x64.
+
+The MSI places `orbit.exe` in the selected installation directory (for example, `H:\\Games\\ORBIT`) and creates Start Menu shortcuts separately. The app code and frontend are bundled in that executable; source code and build tools are not runtime files. New torrent payloads go under `<installation directory>\\Downloads`; if Windows does not allow writing there (such as a default `Program Files` install), ORBIT uses the user's `Downloads\\ORBIT` folder instead. Session/settings data remain in the current Windows user profile.
 
 The current MSI and executable are not code-signed; Windows may display an unknown-publisher or SmartScreen warning. A trusted code-signing certificate is needed to remove that warning for public distribution.
 

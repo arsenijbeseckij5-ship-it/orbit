@@ -94,6 +94,15 @@ pub fn default_download_folder(state: State<'_, AppState>) -> Result<String, Str
         .ok_or_else(|| "Путь загрузки не поддерживает Unicode.".to_owned())
 }
 
+#[tauri::command]
+pub fn legacy_default_download_folder(state: State<'_, AppState>) -> Result<String, String> {
+    state
+        .legacy_default_download_dir
+        .to_str()
+        .map(str::to_owned)
+        .ok_or_else(|| "Старый путь загрузки не поддерживает Unicode.".to_owned())
+}
+
 async fn download_directory(requested: Option<String>, fallback: &Path) -> Result<String, String> {
     let path = requested
         .filter(|value| !value.trim().is_empty())

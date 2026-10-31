@@ -26,6 +26,7 @@ import {
   chooseTorrentFile,
   defaultDownloadFolder,
   isDesktopRuntime,
+  legacyDefaultDownloadFolder,
   listTorrents,
   openTorrentFolder,
   pauseTorrent,
@@ -129,13 +130,30 @@ export default function App() {
   }, [runtimeAvailable]);
 
   useEffect(() => {
-    if (!runtimeAvailable || downloadFolder) return;
-    void defaultDownloadFolder()
-      .then(setDownloadFolder)
+    if (!runtimeAvailable) return;
+    let cancelled = false;
+    const savedFolder = readDownloadFolder();
+    const normalizeFolder = (folder: string) =>
+      folder.replace(/[\\/]+$/, "").toLowerCase();
+    void Promise.all([defaultDownloadFolder(), legacyDefaultDownloadFolder()])
+      .then(([defaultFolder, legacyFolder]) => {
+        if (cancelled) return;
+        if (
+          !savedFolder ||
+          normalizeFolder(savedFolder) === normalizeFolder(legacyFolder)
+        ) {
+          setDownloadFolder(defaultFolder);
+        } else {
+          setDownloadFolder(savedFolder);
+        }
+      })
       .catch((error: unknown) =>
         notify(error instanceof Error ? error.message : String(error), "error"),
       );
-  }, [downloadFolder, notify, runtimeAvailable]);
+    return () => {
+      cancelled = true;
+    };
+  }, [notify, runtimeAvailable]);
 
   useEffect(() => {
     if (!runtimeAvailable) return;
