@@ -14,35 +14,135 @@ import {
   Trash2,
   X,
 } from "lucide-react";
-import { useCallback, useEffect, useMemo, useState } from "react";
+import { sendNotification } from "@tauri-apps/plugin-notification";
+import type {
+  CSSProperties,
+  KeyboardEvent as ReactKeyboardEvent,
+  PointerEvent as ReactPointerEvent,
+} from "react";
+import { useCallback, useEffect, useMemo, useRef, useState } from "react";
 import { AddMagnetDialog } from "./components/AddMagnetDialog";
 import { SpeedChart } from "./components/SpeedChart";
 import { Sidebar, type ViewFilter } from "./components/Sidebar";
 import { Toolbar } from "./components/Toolbar";
 import { TorrentTable } from "./components/TorrentTable";
+import { TorrentDetails } from "./components/TorrentDetails";
 import {
   addMagnet,
   addTorrentFile,
   chooseTorrentFile,
   defaultDownloadFolder,
   isDesktopRuntime,
+  legacyDefaultDownloadFolder,
   listTorrents,
   openTorrentFolder,
   pauseTorrent,
   removeTorrent,
   resumeTorrent,
+  setCloseToTray,
+  setRateLimits,
+  type RateLimits,
 } from "./services/torrentService";
 import { Settings } from "./pages/Settings";
 import type { Torrent } from "./types/torrent";
 
 const DEFAULT_DOWNLOAD_FOLDER = "";
 const REFRESH_INTERVAL_MS = 1000;
+const SIDEBAR_MIN_WIDTH = 184;
+const SIDEBAR_MAX_WIDTH = 320;
+const DEFAULT_SIDEBAR_WIDTH = 228;
+const CHART_MIN_HEIGHT = 72;
+const CHART_MAX_HEIGHT = 220;
+const DEFAULT_CHART_HEIGHT = 110;
+
+type ResizeAxis = "column" | "row";
+
+interface ActiveResize {
+  axis: ResizeAxis;
+  pointerId: number;
+  startPosition: number;
+  startSize: number;
+  currentSize: number;
+}
+
+function readSizePreference(key: string, fallback: number, min: number, max: number): number {
+  try {
+    const stored = Number(localStorage.getItem(key));
+    return Number.isFinite(stored) && stored >= min && stored <= max
+      ? stored
+      : fallback;
+  } catch {
+    return fallback;
+  }
+}
+
+function persistPreference(key: string, value: string) {
+  try {
+    localStorage.setItem(key, value);
+  } catch {
+    // The preference remains active for the current run.
+  }
+}
 
 function readDownloadFolder(): string {
   try {
     return localStorage.getItem("orbit.downloadFolder") ?? DEFAULT_DOWNLOAD_FOLDER;
   } catch {
     return DEFAULT_DOWNLOAD_FOLDER;
+  }
+}
+
+function readStoredArray(key: string): string[] {
+  try {
+    const stored: unknown = JSON.parse(localStorage.getItem(key) ?? "[]");
+    return Array.isArray(stored) && stored.every((value) => typeof value === "string")
+      ? stored
+      : [];
+  } catch {
+    return [];
+  }
+}
+
+function readCategories(): Record<string, string> {
+  try {
+    const stored: unknown = JSON.parse(localStorage.getItem("orbit.categories") ?? "{}");
+    if (!stored || typeof stored !== "object" || Array.isArray(stored)) return {};
+    return Object.fromEntries(
+      Object.entries(stored).filter((entry): entry is [string, string] => typeof entry[1] === "string"),
+    );
+  } catch {
+    return {};
+  }
+}
+
+function readRateLimit(key: string): number | null {
+  try {
+    const stored = localStorage.getItem(key);
+    if (stored === null || stored === "unlimited") return null;
+    const value = Number(stored);
+    return Number.isSafeInteger(value) && value > 0 && value <= 4_294_967_295
+      ? value
+      : null;
+  } catch {
+    return null;
+  }
+}
+
+function readBooleanPreference(key: string, fallback: boolean): boolean {
+  try {
+    const value = localStorage.getItem(key);
+    return value === null ? fallback : value === "true";
+  } catch {
+    return fallback;
+  }
+}
+
+function readMaxActiveDownloads(): number {
+  try {
+    const value = Number(localStorage.getItem("orbit.maxActiveDownloads"));
+    return Number.isInteger(value) && value >= 0 && value <= 20 ? value : 3;
+  } catch {
+    return 3;
   }
 }
 
@@ -70,9 +170,111 @@ export default function App() {
   const [busy, setBusy] = useState(false);
   const [settingsOpen, setSettingsOpen] = useState(false);
   const [downloadFolder, setDownloadFolder] = useState(readDownloadFolder);
+  const [rateLimits, setRateLimitsState] = useState<RateLimits>(() => ({
+    downloadBps: readRateLimit("orbit.downloadLimitBps"),
+    uploadBps: readRateLimit("orbit.uploadLimitBps"),
+  }));
+  const [maxActiveDownloads, setMaxActiveDownloads] = useState(readMaxActiveDownloads);
+  const [closeToTray, setCloseToTrayState] = useState(() =>
+    readBooleanPreference("orbit.closeToTray", false),
+  );
+  const [notificationsEnabled, setNotificationsEnabled] = useState(() =>
+    readBooleanPreference("orbit.notifications", true),
+  );
+  const [categories, setCategories] = useState<Record<string, string>>(readCategories);
+  const [queueOrder, setQueueOrder] = useState<string[]>(() => readStoredArray("orbit.queueOrder"));
   const [notice, setNotice] = useState<Notice | null>(null);
   const [runtimeAvailable] = useState(isDesktopRuntime);
   const [engineError, setEngineError] = useState<string | null>(null);
+  const [sidebarWidth, setSidebarWidth] = useState(() =>
+    readSizePreference("orbit.sidebarWidth", DEFAULT_SIDEBAR_WIDTH, SIDEBAR_MIN_WIDTH, SIDEBAR_MAX_WIDTH),
+  );
+  const [chartHeight, setChartHeight] = useState(() =>
+    readSizePreference("orbit.chartHeight", DEFAULT_CHART_HEIGHT, CHART_MIN_HEIGHT, CHART_MAX_HEIGHT),
+  );
+  const [resizeAxis, setResizeAxis] = useState<ResizeAxis | null>(null);
+  const activeResize = useRef<ActiveResize | null>(null);
+  const manuallyPaused = useRef(new Set(readStoredArray("orbit.manuallyPaused")));
+  const queuePaused = useRef(new Set(readStoredArray("orbit.queuePaused")));
+  const queueKnown = useRef(false);
+  const queueSyncBusy = useRef(false);
+  const queueError = useRef<string | null>(null);
+  const initialFinishedSnapshot = useRef<Set<string> | null>(null);
+
+  function persistSize(key: string, value: number) {
+    try {
+      localStorage.setItem(key, String(value));
+    } catch {
+      // Resizing still works for this run when browser storage is unavailable.
+    }
+  }
+
+  function beginResize(axis: ResizeAxis, event: ReactPointerEvent<HTMLDivElement>, size: number) {
+    if (event.button !== 0) return;
+    event.preventDefault();
+    event.currentTarget.setPointerCapture(event.pointerId);
+    activeResize.current = {
+      axis,
+      pointerId: event.pointerId,
+      startPosition: axis === "column" ? event.clientX : event.clientY,
+      startSize: size,
+      currentSize: size,
+    };
+    setResizeAxis(axis);
+  }
+
+  function moveResize(event: ReactPointerEvent<HTMLDivElement>) {
+    const resize = activeResize.current;
+    if (!resize || resize.pointerId !== event.pointerId) return;
+    const position = resize.axis === "column" ? event.clientX : event.clientY;
+    const delta = resize.axis === "column"
+      ? position - resize.startPosition
+      : resize.startPosition - position;
+
+    if (resize.axis === "column") {
+      resize.currentSize = Math.min(
+        SIDEBAR_MAX_WIDTH,
+        Math.max(SIDEBAR_MIN_WIDTH, resize.startSize + delta),
+      );
+      setSidebarWidth(resize.currentSize);
+    } else {
+      resize.currentSize = Math.min(
+        CHART_MAX_HEIGHT,
+        Math.max(CHART_MIN_HEIGHT, resize.startSize + delta),
+      );
+      setChartHeight(resize.currentSize);
+    }
+  }
+
+  function finishResize(event: ReactPointerEvent<HTMLDivElement>) {
+    const resize = activeResize.current;
+    if (!resize || resize.pointerId !== event.pointerId) return;
+    persistSize(
+      resize.axis === "column" ? "orbit.sidebarWidth" : "orbit.chartHeight",
+      resize.currentSize,
+    );
+    activeResize.current = null;
+    setResizeAxis(null);
+  }
+
+  function resizeByKeyboard(axis: ResizeAxis, event: ReactKeyboardEvent<HTMLDivElement>) {
+    const current = axis === "column" ? sidebarWidth : chartHeight;
+    const min = axis === "column" ? SIDEBAR_MIN_WIDTH : CHART_MIN_HEIGHT;
+    const max = axis === "column" ? SIDEBAR_MAX_WIDTH : CHART_MAX_HEIGHT;
+    const increaseKey = axis === "column" ? "ArrowRight" : "ArrowUp";
+    const decreaseKey = axis === "column" ? "ArrowLeft" : "ArrowDown";
+    let next: number;
+    if (event.key === increaseKey) next = Math.min(max, current + 12);
+    else if (event.key === decreaseKey) next = Math.max(min, current - 12);
+    else if (event.key === "Home") next = min;
+    else if (event.key === "End") next = max;
+    else return;
+
+    event.preventDefault();
+    if (axis === "column") setSidebarWidth(next);
+    else setChartHeight(next);
+    persistSize(axis === "column" ? "orbit.sidebarWidth" : "orbit.chartHeight", next);
+  }
 
   const notify = useCallback((message: string, kind: Notice["kind"] = "success") => {
     setNotice({ message, kind });
@@ -82,6 +284,19 @@ export default function App() {
   const refresh = useCallback(async () => {
     const latest = await listTorrents();
     setTorrents(latest);
+    setQueueOrder((current) => {
+      const currentSet = new Set(current);
+      const next = [
+        ...current.filter((hash) => latest.some((torrent) => torrent.infoHash === hash)),
+        ...latest.map((torrent) => torrent.infoHash).filter((hash) => !currentSet.has(hash)),
+      ];
+      try {
+        persistPreference("orbit.queueOrder", JSON.stringify(next));
+      } catch {
+        // The current queue still works if browser storage is unavailable.
+      }
+      return next;
+    });
     setSelectedIds((current) => {
       const existing = new Set(latest.map((torrent) => torrent.id));
       return new Set([...current].filter((id) => existing.has(id)));
@@ -99,17 +314,8 @@ export default function App() {
 
     const update = async () => {
       try {
-        const latest = await listTorrents();
+        await refresh();
         if (cancelled) return;
-        setTorrents(latest);
-        setSelectedIds((current) => {
-          const existing = new Set(latest.map((torrent) => torrent.id));
-          return new Set([...current].filter((id) => existing.has(id)));
-        });
-        setSelectedTorrent((current) =>
-          current ? latest.find((torrent) => torrent.id === current.id) ?? null : null,
-        );
-        setEngineError(null);
       } catch (error) {
         if (cancelled) return;
         setEngineError(error instanceof Error ? error.message : String(error));
@@ -126,16 +332,132 @@ export default function App() {
       cancelled = true;
       window.clearInterval(interval);
     };
-  }, [runtimeAvailable]);
+  }, [refresh, runtimeAvailable]);
 
   useEffect(() => {
-    if (!runtimeAvailable || downloadFolder) return;
-    void defaultDownloadFolder()
-      .then(setDownloadFolder)
+    if (!runtimeAvailable) return;
+    let cancelled = false;
+    const savedFolder = readDownloadFolder();
+    const normalizeFolder = (folder: string) =>
+      folder.replace(/[\\/]+$/, "").toLowerCase();
+    void Promise.all([defaultDownloadFolder(), legacyDefaultDownloadFolder()])
+      .then(([defaultFolder, legacyFolder]) => {
+        if (cancelled) return;
+        if (
+          !savedFolder ||
+          normalizeFolder(savedFolder) === normalizeFolder(legacyFolder)
+        ) {
+          setDownloadFolder(defaultFolder);
+        } else {
+          setDownloadFolder(savedFolder);
+        }
+      })
       .catch((error: unknown) =>
         notify(error instanceof Error ? error.message : String(error), "error"),
       );
-  }, [downloadFolder, notify, runtimeAvailable]);
+    return () => {
+      cancelled = true;
+    };
+  }, [notify, runtimeAvailable]);
+
+  useEffect(() => {
+    if (!runtimeAvailable) return;
+    void setRateLimits(rateLimits).catch((error: unknown) =>
+      notify(error instanceof Error ? error.message : String(error), "error"),
+    );
+    void setCloseToTray(closeToTray).catch((error: unknown) =>
+      notify(error instanceof Error ? error.message : String(error), "error"),
+    );
+  }, [closeToTray, notify, rateLimits, runtimeAvailable]);
+
+  useEffect(() => {
+    if (!runtimeAvailable || torrents.length === 0) return;
+    const finished = new Set(
+      torrents.filter((torrent) => torrent.finished).map((torrent) => torrent.infoHash),
+    );
+    const previous = initialFinishedSnapshot.current;
+    initialFinishedSnapshot.current = finished;
+    if (!previous || !notificationsEnabled) return;
+
+    for (const torrent of torrents) {
+    if (!previous.has(torrent.infoHash) && finished.has(torrent.infoHash)) {
+      sendNotification({
+        title: "Загрузка завершена",
+        body: torrent.name,
+      });
+    }
+    }
+  }, [notificationsEnabled, runtimeAvailable, torrents]);
+
+  useEffect(() => {
+    if (!runtimeAvailable || torrents.length === 0 || queueSyncBusy.current) return;
+
+    if (!queueKnown.current) {
+      for (const torrent of torrents) {
+        if (torrent.status === "paused" && !queuePaused.current.has(torrent.infoHash)) {
+          manuallyPaused.current.add(torrent.infoHash);
+        }
+      }
+      queueKnown.current = true;
+      persistPreference(
+        "orbit.manuallyPaused",
+        JSON.stringify([...manuallyPaused.current]),
+      );
+    }
+
+    const orderIndex = new Map(queueOrder.map((hash, index) => [hash, index]));
+    const ordered = [...torrents].sort(
+      (left, right) =>
+        (orderIndex.get(left.infoHash) ?? Number.MAX_SAFE_INTEGER) -
+        (orderIndex.get(right.infoHash) ?? Number.MAX_SAFE_INTEGER),
+    );
+    const eligible = ordered.filter(
+      (torrent) =>
+        !torrent.finished &&
+        torrent.status !== "error" &&
+        !manuallyPaused.current.has(torrent.infoHash),
+    );
+    const desired = maxActiveDownloads === 0
+      ? eligible
+      : eligible.slice(0, maxActiveDownloads);
+    const desiredHashes = new Set(desired.map((torrent) => torrent.infoHash));
+    const toPause = torrents.filter(
+      (torrent) =>
+        (torrent.status === "downloading" || torrent.status === "metadata") &&
+        !desiredHashes.has(torrent.infoHash),
+    );
+    const toResume = desired.filter((torrent) => torrent.status === "paused");
+    if (toPause.length === 0 && toResume.length === 0) return;
+
+    queueSyncBusy.current = true;
+    void Promise.all([
+      ...toPause.map((torrent) => pauseTorrent(torrent.id)),
+      ...toResume.map((torrent) => resumeTorrent(torrent.id)),
+    ])
+      .then(() => {
+        queueError.current = null;
+        toPause.forEach((torrent) => {
+          queuePaused.current.add(torrent.infoHash);
+          manuallyPaused.current.delete(torrent.infoHash);
+        });
+        toResume.forEach((torrent) => queuePaused.current.delete(torrent.infoHash));
+        persistPreference("orbit.queuePaused", JSON.stringify([...queuePaused.current]));
+        persistPreference(
+          "orbit.manuallyPaused",
+          JSON.stringify([...manuallyPaused.current]),
+        );
+      })
+      .catch((error: unknown) => {
+        const message = error instanceof Error ? error.message : String(error);
+        if (queueError.current !== message) {
+          notify(`Не удалось обновить очередь: ${message}`, "error");
+          queueError.current = message;
+        }
+      })
+      .finally(() => {
+        queueSyncBusy.current = false;
+      });
+  }, [maxActiveDownloads, notify, queueOrder, runtimeAvailable, torrents]);
 
   useEffect(() => {
     if (!runtimeAvailable) return;
@@ -172,13 +494,42 @@ export default function App() {
   const visibleTorrents = useMemo(() => {
     const query = search.trim().toLocaleLowerCase();
     return torrents.filter((torrent) => {
+      const category = (categories[torrent.infoHash] ?? "").trim();
+      if (
+        filter.startsWith("category:") &&
+        category.toLocaleLowerCase() !== filter.slice("category:".length).toLocaleLowerCase()
+      ) {
+        return false;
+      }
       if (filter === "active" && torrent.status !== "downloading") return false;
+      if (filter === "incomplete" && (torrent.finished || torrent.status === "error")) return false;
       if (filter === "completed" && !torrent.finished) return false;
       if (filter === "paused" && torrent.status !== "paused") return false;
       if (filter === "seeding" && torrent.status !== "seeding") return false;
-      return !query || torrent.name.toLocaleLowerCase().includes(query) || torrent.infoHash.includes(query);
+      if (filter === "errors" && torrent.status !== "error" && !torrent.error) return false;
+      return !query ||
+        torrent.name.toLocaleLowerCase().includes(query) ||
+        torrent.infoHash.includes(query) ||
+        category.toLocaleLowerCase().includes(query);
     });
-  }, [filter, search, torrents]);
+  }, [categories, filter, search, torrents]);
+
+  const categoryItems = useMemo(() => {
+    const counts = new Map<string, number>();
+    for (const torrent of torrents) {
+      const category = categories[torrent.infoHash]?.trim();
+      if (category) counts.set(category, (counts.get(category) ?? 0) + 1);
+    }
+    return [...counts].map(([name, count]) => ({ name, count })).sort((a, b) => a.name.localeCompare(b.name));
+  }, [categories, torrents]);
+
+  const completedCount = useMemo(
+    () => torrents.filter((torrent) => torrent.finished).length,
+    [torrents],
+  );
+  const allVisibleSelected =
+    visibleTorrents.length > 0 &&
+    visibleTorrents.every((torrent) => selectedIds.has(torrent.id));
 
   const totals = useMemo(
     () =>
@@ -198,10 +549,31 @@ export default function App() {
   async function performAction(
     action: (id: number) => Promise<void>,
     successMessage: string,
+    manualPauseState?: boolean,
   ) {
     if (selectedIds.size === 0) return;
     setBusy(true);
     try {
+      if (manualPauseState !== undefined) {
+        const selected = torrents.filter((torrent) => selectedIds.has(torrent.id));
+        selected.forEach((torrent) => {
+          if (manualPauseState) {
+            manuallyPaused.current.add(torrent.infoHash);
+            queuePaused.current.delete(torrent.infoHash);
+          } else {
+            manuallyPaused.current.delete(torrent.infoHash);
+            queuePaused.current.delete(torrent.infoHash);
+          }
+        });
+        persistPreference(
+          "orbit.manuallyPaused",
+          JSON.stringify([...manuallyPaused.current]),
+        );
+        persistPreference("orbit.queuePaused", JSON.stringify([...queuePaused.current]));
+        if (!manualPauseState) {
+          prioritizeTorrents(selected.map((torrent) => torrent.infoHash));
+        }
+      }
       await Promise.all([...selectedIds].map(action));
       await refresh();
       notify(successMessage);
@@ -285,18 +657,116 @@ export default function App() {
     }
   }
 
-  function saveDownloadFolder(folder: string) {
-    setDownloadFolder(folder);
-    try {
-      localStorage.setItem("orbit.downloadFolder", folder);
-    } catch (error) {
-      notify(
-        `Не удалось сохранить настройки в браузере: ${
-          error instanceof Error ? error.message : String(error)
-        }`,
-        "error",
-      );
+  function toggleVisibleSelection() {
+    setSelectedIds((current) => {
+      const next = new Set(current);
+      if (allVisibleSelected) {
+        visibleTorrents.forEach((torrent) => next.delete(torrent.id));
+      } else {
+        visibleTorrents.forEach((torrent) => next.add(torrent.id));
+      }
+      return next;
+    });
+  }
+
+  async function clearCompleted() {
+    const completed = torrents.filter((torrent) => torrent.finished);
+    if (completed.length === 0) return;
+    if (
+      !window.confirm(
+        `Убрать ${completed.length} завершённых торрентов из библиотеки? Скачанные файлы останутся на диске.`,
+      )
+    ) {
+      return;
     }
+
+    setBusy(true);
+    const errors: string[] = [];
+    try {
+      for (const torrent of completed) {
+        try {
+          await removeTorrent(torrent.id, false);
+        } catch (error) {
+          errors.push(
+            `${torrent.name}: ${error instanceof Error ? error.message : String(error)}`,
+          );
+        }
+      }
+      await refresh();
+      if (errors.length > 0) {
+        notify(
+          `Не все завершённые торренты удалось убрать:\n${errors.join("\n")}`,
+          "error",
+        );
+      } else {
+        notify("Завершённые торренты убраны из библиотеки, файлы сохранены.");
+      }
+    } catch (error) {
+      notify(error instanceof Error ? error.message : String(error), "error");
+    } finally {
+      setBusy(false);
+    }
+  }
+
+  async function savePreferences(
+    folder: string,
+    limits: RateLimits,
+    nextMaxActiveDownloads: number,
+    nextCloseToTray: boolean,
+    nextNotifications: boolean,
+  ) {
+    if (runtimeAvailable) {
+      await setRateLimits(limits);
+      await setCloseToTray(nextCloseToTray);
+    }
+    localStorage.setItem("orbit.downloadFolder", folder);
+    localStorage.setItem("orbit.downloadLimitBps", limits.downloadBps?.toString() ?? "unlimited");
+    localStorage.setItem("orbit.uploadLimitBps", limits.uploadBps?.toString() ?? "unlimited");
+    localStorage.setItem("orbit.maxActiveDownloads", String(nextMaxActiveDownloads));
+    localStorage.setItem("orbit.closeToTray", String(nextCloseToTray));
+    localStorage.setItem("orbit.notifications", String(nextNotifications));
+    setDownloadFolder(folder);
+    setRateLimitsState(limits);
+    setMaxActiveDownloads(nextMaxActiveDownloads);
+    setCloseToTrayState(nextCloseToTray);
+    setNotificationsEnabled(nextNotifications);
+  }
+
+  function moveTorrentInQueue(torrent: Torrent, direction: -1 | 1) {
+    setQueueOrder((current) => {
+      const order = [
+        ...current.filter((hash) => hash !== torrent.infoHash),
+        ...(current.includes(torrent.infoHash) ? [] : [torrent.infoHash]),
+      ];
+      const index = order.indexOf(torrent.infoHash);
+      const target = Math.max(0, Math.min(order.length - 1, index + direction));
+      if (target === index) return current;
+      [order[index], order[target]] = [order[target], order[index]];
+      persistPreference("orbit.queueOrder", JSON.stringify(order));
+      return order;
+    });
+  }
+
+  function prioritizeTorrents(hashes: string[]) {
+    setQueueOrder((current) => {
+      const selected = [...new Set(hashes)];
+      const next = [
+        ...selected,
+        ...current.filter((hash) => !selected.includes(hash)),
+      ];
+      persistPreference("orbit.queueOrder", JSON.stringify(next));
+      return next;
+    });
+  }
+
+  function setTorrentCategory(torrent: Torrent, category: string) {
+    setCategories((current) => {
+      const next = { ...current };
+      if (category.trim()) next[torrent.infoHash] = category;
+      else delete next[torrent.infoHash];
+      persistPreference("orbit.categories", JSON.stringify(next));
+      return next;
+    });
   }
 
   function selectTorrent(torrent: Torrent) {
@@ -306,11 +776,20 @@ export default function App() {
   async function toggleTorrent(torrent: Torrent) {
     setBusy(true);
     try {
-      await (torrent.status === "paused"
-        ? resumeTorrent(torrent.id)
-        : pauseTorrent(torrent.id));
+      const pausing = torrent.status !== "paused";
+      if (pausing) {
+        manuallyPaused.current.add(torrent.infoHash);
+        queuePaused.current.delete(torrent.infoHash);
+      } else {
+        manuallyPaused.current.delete(torrent.infoHash);
+        queuePaused.current.delete(torrent.infoHash);
+        prioritizeTorrents([torrent.infoHash]);
+      }
+      persistPreference("orbit.manuallyPaused", JSON.stringify([...manuallyPaused.current]));
+      persistPreference("orbit.queuePaused", JSON.stringify([...queuePaused.current]));
+      await (pausing ? pauseTorrent(torrent.id) : resumeTorrent(torrent.id));
       await refresh();
-      notify(torrent.status === "paused" ? "Загрузка возобновлена." : "Загрузка приостановлена.");
+      notify(pausing ? "Загрузка приостановлена." : "Загрузка возобновлена.");
     } catch (error) {
       notify(error instanceof Error ? error.message : String(error), "error");
     } finally {
@@ -365,10 +844,20 @@ export default function App() {
 
   const selectedDetailsTorrent =
     torrents.find((torrent) => torrent.id === selectedTorrent?.id) ?? null;
+  const selectedQueuePosition = selectedDetailsTorrent
+    ? Math.max(0, queueOrder.indexOf(selectedDetailsTorrent.infoHash)) + 1
+    : 0;
 
   return (
-    <div className="app-shell">
+    <div
+      className={`app-shell ${resizeAxis ? `resizing-${resizeAxis}` : ""}`}
+      style={{
+        "--sidebar-width": `${sidebarWidth}px`,
+        "--chart-height": `${chartHeight}px`,
+      } as CSSProperties}
+    >
       <Sidebar
+        categories={categoryItems}
         filter={filter}
         onFilterChange={(next) => {
           setFilter(next);
@@ -378,16 +867,41 @@ export default function App() {
         settingsOpen={settingsOpen}
         torrents={torrents}
       />
+      <div
+        aria-label="Ширина боковой панели"
+        aria-orientation="vertical"
+        aria-valuemax={SIDEBAR_MAX_WIDTH}
+        aria-valuemin={SIDEBAR_MIN_WIDTH}
+        aria-valuenow={sidebarWidth}
+        className="resize-handle column-resizer"
+        onKeyDown={(event) => resizeByKeyboard("column", event)}
+        onLostPointerCapture={() => {
+          activeResize.current = null;
+          setResizeAxis(null);
+        }}
+        onPointerCancel={finishResize}
+        onPointerDown={(event) => beginResize("column", event, sidebarWidth)}
+        onPointerMove={moveResize}
+        onPointerUp={finishResize}
+        role="separator"
+        tabIndex={0}
+        title="Потяните, чтобы изменить ширину боковой панели"
+      />
       <main className="main-panel">
-        {settingsOpen ? (
-          <Settings
-            initialDownloadFolder={downloadFolder}
-            notify={notify}
-            onBack={() => setSettingsOpen(false)}
-            onSaveFolder={saveDownloadFolder}
-          />
-        ) : (
-          <>
+        <div className="main-content">
+          {settingsOpen ? (
+            <Settings
+              initialCloseToTray={closeToTray}
+              initialDownloadFolder={downloadFolder}
+              initialMaxActiveDownloads={maxActiveDownloads}
+              initialNotifications={notificationsEnabled}
+              initialRateLimits={rateLimits}
+              notify={notify}
+              onBack={() => setSettingsOpen(false)}
+              onSavePreferences={savePreferences}
+            />
+          ) : (
+            <>
             <header className="page-header">
               <div>
                 <div className="eyebrow">ВАША БИБЛИОТЕКА</div>
@@ -403,11 +917,11 @@ export default function App() {
               onAddFile={addFromFile}
               onAddMagnet={() => setMagnetOpen(true)}
               onPause={() =>
-                void performAction(pauseTorrent, "Загрузки приостановлены.")
+                void performAction(pauseTorrent, "Загрузки приостановлены.", true)
               }
               onRemove={() => void removeSelected()}
               onResume={() =>
-                void performAction(resumeTorrent, "Загрузки возобновлены.")
+                void performAction(resumeTorrent, "Загрузки возобновлены.", false)
               }
               onSearch={setSearch}
               search={search}
@@ -422,22 +936,32 @@ export default function App() {
                 </button>
               </div>
             )}
-            {selectedDetailsTorrent ? (
-              <div className="content-heading">
-                <div className="table-caption">
-                  <span>ОЧЕРЕДЬ</span>
-                  <span className="caption-dot" />
-                  <span>{visibleTorrents.length} торрентов</span>
-                </div>
-                <span className="details-hint">Нажмите на строку, чтобы выбрать</span>
+            <div className="content-heading">
+              <div className="table-caption">
+                <span>ОЧЕРЕДЬ</span>
+                <span className="caption-dot" />
+                <span>{visibleTorrents.length} торрентов</span>
               </div>
-            ) : (
-              <div className="content-heading">
-                <div className="table-caption">
-                  <span>ОЧЕРЕДЬ</span>
-                  <span className="caption-dot" />
-                  <span>{visibleTorrents.length} торрентов</span>
-                </div>
+              <div className="content-actions">
+                {selectedIds.size > 0 && (
+                  <span className="selection-count">{selectedIds.size} выбрано</span>
+                )}
+                <button
+                  className="refresh-link"
+                  disabled={visibleTorrents.length === 0}
+                  onClick={toggleVisibleSelection}
+                  type="button"
+                >
+                  {allVisibleSelected ? "Снять выделение" : "Выбрать видимые"}
+                </button>
+                <button
+                  className="refresh-link"
+                  disabled={completedCount === 0 || busy || !runtimeAvailable}
+                  onClick={() => void clearCompleted()}
+                  type="button"
+                >
+                  Очистить готовые{completedCount > 0 ? ` · ${completedCount}` : ""}
+                </button>
                 <button
                   className="refresh-link"
                   onClick={() => void refresh()}
@@ -447,7 +971,7 @@ export default function App() {
                   Обновить
                 </button>
               </div>
-            )}
+            </div>
             <section className="table-card">
               {visibleTorrents.length > 0 ? (
                 <TorrentTable
@@ -457,6 +981,7 @@ export default function App() {
                   onOpenFolder={(torrent) => void openFolder(torrent)}
                   onRemoveTorrent={(torrent) => void removeTorrentFromMenu(torrent)}
                   actionsDisabled={!runtimeAvailable || busy}
+                  queueOrder={queueOrder}
                   selectedIds={selectedIds}
                   torrents={visibleTorrents}
                 />
@@ -560,72 +1085,81 @@ export default function App() {
                 )}
               </div>
               {selectedDetailsTorrent ? (
-                <div className="details-data">
-                  <div className="detail-entry">
-                    <span>Статус</span>
-                    <strong>{selectedDetailsTorrent.status}</strong>
-                  </div>
-                  <div className="detail-entry">
-                    <span>Размер</span>
-                    <strong>{formatBytes(selectedDetailsTorrent.totalBytes)}</strong>
-                  </div>
-                  <div className="detail-entry detail-hash">
-                    <span>Info hash</span>
-                    <strong title={selectedDetailsTorrent.infoHash}>
-                      {selectedDetailsTorrent.infoHash}
-                    </strong>
-                  </div>
-                  <div className="detail-entry detail-folder">
-                    <span>Папка</span>
-                    <strong title={selectedDetailsTorrent.outputFolder}>
-                      {selectedDetailsTorrent.outputFolder}
-                    </strong>
-                  </div>
-                  {selectedDetailsTorrent.error && (
-                    <div className="detail-error">
-                      <CircleAlert size={14} />
-                      {selectedDetailsTorrent.error}
-                    </div>
-                  )}
-                </div>
+                <TorrentDetails
+                  category={categories[selectedDetailsTorrent.infoHash] ?? ""}
+                  notify={notify}
+                  onCategoryChange={(category) =>
+                    setTorrentCategory(selectedDetailsTorrent, category)
+                  }
+                  onMoveInQueue={(direction) =>
+                    moveTorrentInQueue(selectedDetailsTorrent, direction)
+                  }
+                  queuePosition={selectedQueuePosition}
+                  torrent={selectedDetailsTorrent}
+                />
               ) : (
                 <div className="details-placeholder">
                   Выберите торрент, чтобы посмотреть его статус и путь сохранения.
                 </div>
               )}
             </div>
+            </>
+          )}
+        </div>
+        {!settingsOpen && (
+          <div className="bottom-dock">
+            <div
+              aria-label="Высота панели графика"
+              aria-orientation="horizontal"
+              aria-valuemax={CHART_MAX_HEIGHT}
+              aria-valuemin={CHART_MIN_HEIGHT}
+              aria-valuenow={chartHeight}
+              className="resize-handle chart-resizer"
+              onKeyDown={(event) => resizeByKeyboard("row", event)}
+              onLostPointerCapture={() => {
+                activeResize.current = null;
+                setResizeAxis(null);
+              }}
+              onPointerCancel={finishResize}
+              onPointerDown={(event) => beginResize("row", event, chartHeight)}
+              onPointerMove={moveResize}
+              onPointerUp={finishResize}
+              role="separator"
+              tabIndex={0}
+              title="Потяните, чтобы изменить высоту панели графика"
+            />
             <footer className="status-bar">
-              <div className="status-metric">
-                <ArrowDownToLine size={14} />
-                <span>↓ {formatBytes(totals.download)}/с</span>
-              </div>
-              <div className="status-metric">
-                <ArrowUpFromLine size={14} />
-                <span>↑ {formatBytes(totals.upload)}/с</span>
-              </div>
-              <span className="status-separator" />
-              <div className="status-metric">
-                <ActivityIcon />
-                <span>{totals.active} активных</span>
-              </div>
-              <SpeedChart
-                downloadSpeed={totals.download}
-                enabled={runtimeAvailable && !engineError}
-                uploadSpeed={totals.upload}
-              />
-              <div className="status-bar-spacer" />
-              <div className="status-engine">
-                <span className={`status-engine-dot ${engineError ? "error" : ""}`} />
-                <span>
-                  {engineError
-                    ? "Ошибка движка"
-                    : runtimeAvailable
-                      ? "librqbit"
-                      : "Браузерный просмотр"}
-                </span>
-              </div>
+                <div className="status-metric">
+                  <ArrowDownToLine size={14} />
+                  <span>↓ {formatBytes(totals.download)}/с</span>
+                </div>
+                <div className="status-metric">
+                  <ArrowUpFromLine size={14} />
+                  <span>↑ {formatBytes(totals.upload)}/с</span>
+                </div>
+                <span className="status-separator" />
+                <div className="status-metric">
+                  <ActivityIcon />
+                  <span>{totals.active} активных</span>
+                </div>
+                <SpeedChart
+                  downloadSpeed={totals.download}
+                  enabled={runtimeAvailable && !engineError}
+                  uploadSpeed={totals.upload}
+                />
+                <div className="status-bar-spacer" />
+                <div className="status-engine">
+                  <span className={`status-engine-dot ${engineError ? "error" : ""}`} />
+                  <span>
+                    {engineError
+                      ? "Ошибка движка"
+                      : runtimeAvailable
+                        ? "librqbit"
+                        : "Браузерный просмотр"}
+                  </span>
+                </div>
             </footer>
-          </>
+          </div>
         )}
       </main>
       <AddMagnetDialog
