@@ -306,12 +306,22 @@ export default function App() {
     const query = search.trim().toLocaleLowerCase();
     return torrents.filter((torrent) => {
       if (filter === "active" && torrent.status !== "downloading") return false;
+      if (filter === "incomplete" && (torrent.finished || torrent.status === "error")) return false;
       if (filter === "completed" && !torrent.finished) return false;
       if (filter === "paused" && torrent.status !== "paused") return false;
       if (filter === "seeding" && torrent.status !== "seeding") return false;
+      if (filter === "errors" && torrent.status !== "error" && !torrent.error) return false;
       return !query || torrent.name.toLocaleLowerCase().includes(query) || torrent.infoHash.includes(query);
     });
   }, [filter, search, torrents]);
+
+  const completedCount = useMemo(
+    () => torrents.filter((torrent) => torrent.finished).length,
+    [torrents],
+  );
+  const allVisibleSelected =
+    visibleTorrents.length > 0 &&
+    visibleTorrents.every((torrent) => selectedIds.has(torrent.id));
 
   const totals = useMemo(
     () =>
@@ -410,6 +420,57 @@ export default function App() {
             ? "Торренты и их файлы удалены."
             : "Торренты удалены, файлы сохранены.",
         );
+      }
+    } catch (error) {
+      notify(error instanceof Error ? error.message : String(error), "error");
+    } finally {
+      setBusy(false);
+    }
+  }
+
+  function toggleVisibleSelection() {
+    setSelectedIds((current) => {
+      const next = new Set(current);
+      if (allVisibleSelected) {
+        visibleTorrents.forEach((torrent) => next.delete(torrent.id));
+      } else {
+        visibleTorrents.forEach((torrent) => next.add(torrent.id));
+      }
+      return next;
+    });
+  }
+
+  async function clearCompleted() {
+    const completed = torrents.filter((torrent) => torrent.finished);
+    if (completed.length === 0) return;
+    if (
+      !window.confirm(
+        `Убрать ${completed.length} завершённых торрентов из библиотеки? Скачанные файлы останутся на диске.`,
+      )
+    ) {
+      return;
+    }
+
+    setBusy(true);
+    const errors: string[] = [];
+    try {
+      for (const torrent of completed) {
+        try {
+          await removeTorrent(torrent.id, false);
+        } catch (error) {
+          errors.push(
+            `${torrent.name}: ${error instanceof Error ? error.message : String(error)}`,
+          );
+        }
+      }
+      await refresh();
+      if (errors.length > 0) {
+        notify(
+          `Не все завершённые торренты удалось убрать:\n${errors.join("\n")}`,
+          "error",
+        );
+      } else {
+        notify("Завершённые торренты убраны из библиотеки, файлы сохранены.");
       }
     } catch (error) {
       notify(error instanceof Error ? error.message : String(error), "error");
@@ -538,15 +599,16 @@ export default function App() {
         title="Потяните, чтобы изменить ширину боковой панели"
       />
       <main className="main-panel">
-        {settingsOpen ? (
-          <Settings
-            initialDownloadFolder={downloadFolder}
-            notify={notify}
-            onBack={() => setSettingsOpen(false)}
-            onSaveFolder={saveDownloadFolder}
-          />
-        ) : (
-          <>
+        <div className="main-content">
+          {settingsOpen ? (
+            <Settings
+              initialDownloadFolder={downloadFolder}
+              notify={notify}
+              onBack={() => setSettingsOpen(false)}
+              onSaveFolder={saveDownloadFolder}
+            />
+          ) : (
+            <>
             <header className="page-header">
               <div>
                 <div className="eyebrow">ВАША БИБЛИОТЕКА</div>
@@ -581,22 +643,32 @@ export default function App() {
                 </button>
               </div>
             )}
-            {selectedDetailsTorrent ? (
-              <div className="content-heading">
-                <div className="table-caption">
-                  <span>ОЧЕРЕДЬ</span>
-                  <span className="caption-dot" />
-                  <span>{visibleTorrents.length} торрентов</span>
-                </div>
-                <span className="details-hint">Нажмите на строку, чтобы выбрать</span>
+            <div className="content-heading">
+              <div className="table-caption">
+                <span>ОЧЕРЕДЬ</span>
+                <span className="caption-dot" />
+                <span>{visibleTorrents.length} торрентов</span>
               </div>
-            ) : (
-              <div className="content-heading">
-                <div className="table-caption">
-                  <span>ОЧЕРЕДЬ</span>
-                  <span className="caption-dot" />
-                  <span>{visibleTorrents.length} торрентов</span>
-                </div>
+              <div className="content-actions">
+                {selectedIds.size > 0 && (
+                  <span className="selection-count">{selectedIds.size} выбрано</span>
+                )}
+                <button
+                  className="refresh-link"
+                  disabled={visibleTorrents.length === 0}
+                  onClick={toggleVisibleSelection}
+                  type="button"
+                >
+                  {allVisibleSelected ? "Снять выделение" : "Выбрать видимые"}
+                </button>
+                <button
+                  className="refresh-link"
+                  disabled={completedCount === 0 || busy || !runtimeAvailable}
+                  onClick={() => void clearCompleted()}
+                  type="button"
+                >
+                  Очистить готовые{completedCount > 0 ? ` · ${completedCount}` : ""}
+                </button>
                 <button
                   className="refresh-link"
                   onClick={() => void refresh()}
@@ -606,7 +678,7 @@ export default function App() {
                   Обновить
                 </button>
               </div>
-            )}
+            </div>
             <section className="table-card">
               {visibleTorrents.length > 0 ? (
                 <TorrentTable
@@ -753,28 +825,32 @@ export default function App() {
                 </div>
               )}
             </div>
-            <div className="bottom-dock">
-              <div
-                aria-label="Высота панели графика"
-                aria-orientation="horizontal"
-                aria-valuemax={CHART_MAX_HEIGHT}
-                aria-valuemin={CHART_MIN_HEIGHT}
-                aria-valuenow={chartHeight}
-                className="resize-handle chart-resizer"
-                onKeyDown={(event) => resizeByKeyboard("row", event)}
-                onLostPointerCapture={() => {
-                  activeResize.current = null;
-                  setResizeAxis(null);
-                }}
-                onPointerCancel={finishResize}
-                onPointerDown={(event) => beginResize("row", event, chartHeight)}
-                onPointerMove={moveResize}
-                onPointerUp={finishResize}
-                role="separator"
-                tabIndex={0}
-                title="Потяните, чтобы изменить высоту панели графика"
-              />
-              <footer className="status-bar">
+            </>
+          )}
+        </div>
+        {!settingsOpen && (
+          <div className="bottom-dock">
+            <div
+              aria-label="Высота панели графика"
+              aria-orientation="horizontal"
+              aria-valuemax={CHART_MAX_HEIGHT}
+              aria-valuemin={CHART_MIN_HEIGHT}
+              aria-valuenow={chartHeight}
+              className="resize-handle chart-resizer"
+              onKeyDown={(event) => resizeByKeyboard("row", event)}
+              onLostPointerCapture={() => {
+                activeResize.current = null;
+                setResizeAxis(null);
+              }}
+              onPointerCancel={finishResize}
+              onPointerDown={(event) => beginResize("row", event, chartHeight)}
+              onPointerMove={moveResize}
+              onPointerUp={finishResize}
+              role="separator"
+              tabIndex={0}
+              title="Потяните, чтобы изменить высоту панели графика"
+            />
+            <footer className="status-bar">
                 <div className="status-metric">
                   <ArrowDownToLine size={14} />
                   <span>↓ {formatBytes(totals.download)}/с</span>
@@ -804,9 +880,8 @@ export default function App() {
                         : "Браузерный просмотр"}
                   </span>
                 </div>
-              </footer>
-            </div>
-          </>
+            </footer>
+          </div>
         )}
       </main>
       <AddMagnetDialog

@@ -1,15 +1,24 @@
 import {
   Activity,
   CheckCircle2,
+  CircleAlert,
   CirclePause,
   Download,
   LayoutGrid,
+  ListTodo,
   Settings,
   Upload,
 } from "lucide-react";
 import type { Torrent } from "../types/torrent";
 
-export type ViewFilter = "all" | "active" | "completed" | "paused" | "seeding";
+export type ViewFilter =
+  | "all"
+  | "active"
+  | "incomplete"
+  | "completed"
+  | "paused"
+  | "seeding"
+  | "errors";
 
 interface SidebarProps {
   torrents: Torrent[];
@@ -34,6 +43,12 @@ const filters: {
       items.filter((torrent) => torrent.status === "downloading").length,
   },
   {
+    id: "incomplete",
+    label: "Незавершённые",
+    icon: ListTodo,
+    count: (items) => items.filter((torrent) => !torrent.finished && torrent.status !== "error").length,
+  },
+  {
     id: "completed",
     label: "Завершённые",
     icon: CheckCircle2,
@@ -50,6 +65,12 @@ const filters: {
     label: "Раздачи",
     icon: Upload,
     count: (items) => items.filter((torrent) => torrent.status === "seeding").length,
+  },
+  {
+    id: "errors",
+    label: "С ошибками",
+    icon: CircleAlert,
+    count: (items) => items.filter((torrent) => torrent.status === "error" || torrent.error).length,
   },
 ];
 
