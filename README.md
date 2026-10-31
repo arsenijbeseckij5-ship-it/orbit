@@ -37,6 +37,21 @@ The backend integration test creates a valid torrent locally and exercises real 
 
 This is the first working foundation, not a feature-complete BitTorrent client. Session resume uses `librqbit`'s local JSON persistence; the chosen download folder is stored in the WebView's local storage. SQLite has not been integrated. File selection, force recheck, peer and tracker inspection, per-torrent and global limits, categories, tray behavior, and installer signing are not implemented yet. No unsupported engine features are represented as available.
 
+## Windows distribution
+
+The Windows x64 MSI installs ORBIT and embeds Microsoft's WebView2 offline installer. It does not need Rust, Node.js, C++ build tools, or an internet connection to install WebView2. The MSI installs per machine and can require administrator approval. The standalone `orbit.exe` is the application binary (not an installer); it needs the Microsoft Edge WebView2 Runtime to be present on the PC. Tauri statically links the Visual C++ runtime for the app, so a separate VC++ Redistributable is not required for this executable. Supported target: Windows 10/11 x64.
+
+The current MSI and executable are not code-signed; Windows may display an unknown-publisher or SmartScreen warning. A trusted code-signing certificate is needed to remove that warning for public distribution.
+
+Build both the MSI and standalone executable on a Windows build machine with the development prerequisites below:
+
+```powershell
+npm ci
+npm run tauri build
+```
+
+Artifacts are written under `src-tauri\target\release\`: the standalone `orbit.exe` and the MSI under `bundle\msi\`. The MSI is significantly larger because it includes the offline WebView2 installer.
+
 ## Development
 
 Install Node.js, Rust (stable, edition 2024), and the Windows C++ Build Tools with the MSVC workload and Windows SDK. Then run:
