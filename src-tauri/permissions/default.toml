@@ -18,5 +18,6 @@ commands.allow = [
   "torrent_peers",
   "get_rate_limits",
   "set_rate_limits",
-  "set_close_to_tray"
+  "set_close_to_tray",
+  "take_pending_torrent_files"
 ]

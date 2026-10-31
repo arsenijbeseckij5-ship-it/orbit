@@ -115,6 +115,11 @@ pub async fn list_torrents(state: State<'_, AppState>) -> Result<Vec<TorrentRow>
 }
 
 #[tauri::command]
+pub fn take_pending_torrent_files(state: State<'_, AppState>) -> Result<Vec<String>, String> {
+    state.take_pending_torrent_files()
+}
+
+#[tauri::command]
 pub async fn torrent_files(
     state: State<'_, AppState>,
     id: usize,

@@ -43,6 +43,7 @@ src-tauri/
 - Open a torrent's download folder from its right-click menu.
 - Persist the engine session between launches; choose, open, copy, or restore the default download folder in Settings. By default, new torrent data is stored in a `Downloads` folder beside the installed app; the previous default is migrated automatically while custom folders are kept.
 - Drop `.torrent` files onto the app window.
+- Open `.torrent` files directly with ORBIT; an installed MSI registers the file type, and subsequent files open in the existing app instance and begin downloading.
 - Start the frontend in a browser for UI work; torrent controls require the Tauri desktop runtime.
 
 The backend integration test creates a valid torrent locally and exercises real engine add, listing, pause, and resume calls without external peers. It does not claim to verify an end-to-end network transfer.
@@ -52,6 +53,8 @@ This is a working foundation, not a feature-complete BitTorrent client. Session 
 ## Windows distribution
 
 The Windows x64 MSI build embeds Microsoft's WebView2 offline installer and installs per machine, which can require administrator approval. The current GitHub release distributes the standalone `orbit.exe` in the full-project ZIP; it needs the Microsoft Edge WebView2 Runtime to be present on the PC. Tauri statically links the Visual C++ runtime for the app, so a separate VC++ Redistributable is not required for this executable. Supported target: Windows 10/11 x64.
+
+The MSI registers `.torrent` as a file type that ORBIT can open. The standalone ZIP does not install or change Windows file associations; to enable double-click opening with that copy, use **Open with → Choose another app** on a `.torrent` file and select `orbit.exe`.
 
 The MSI places `orbit.exe` in the selected installation directory (for example, `H:\\Games\\ORBIT`) and creates Start Menu shortcuts separately. The app code and frontend are bundled in that executable; source code and build tools are not runtime files. New torrent payloads go under `<installation directory>\\Downloads`; if Windows does not allow writing there (such as a default `Program Files` install), ORBIT uses the user's `Downloads\\ORBIT` folder instead. Session/settings data remain in the current Windows user profile.
 

@@ -2,11 +2,13 @@ mod commands;
 
 use std::path::PathBuf;
 use std::sync::atomic::{AtomicBool, Ordering};
+use std::sync::{Arc, Mutex};
 use std::time::{SystemTime, UNIX_EPOCH};
+use std::{collections::VecDeque, path::Path};
 
 use librqbit::{Api, Session, SessionOptions, SessionPersistenceConfig};
 use tauri::{
-    Manager, WindowEvent,
+    Emitter, Manager, WindowEvent,
     menu::{Menu, MenuItem},
     tray::TrayIconBuilder,
 };
@@ -62,6 +64,38 @@ pub struct AppState {
     default_download_dir: PathBuf,
     legacy_default_download_dir: PathBuf,
     close_to_tray: AtomicBool,
+    pending_torrent_files: Arc<Mutex<VecDeque<PathBuf>>>,
+}
+
+fn torrent_paths_from_args(args: impl IntoIterator<Item = String>, cwd: &Path) -> Vec<PathBuf> {
+    args.into_iter()
+        .skip(1)
+        .map(PathBuf::from)
+        .filter(|path| {
+            path.extension()
+                .is_some_and(|extension| extension.eq_ignore_ascii_case("torrent"))
+        })
+        .map(|path| {
+            if path.is_absolute() {
+                path
+            } else {
+                cwd.join(path)
+            }
+        })
+        .collect()
+}
+
+impl AppState {
+    pub fn take_pending_torrent_files(&self) -> Result<Vec<String>, String> {
+        let mut pending = self
+            .pending_torrent_files
+            .lock()
+            .map_err(|error| format!("Cannot read files opened with ORBIT: {error}"))?;
+        Ok(pending
+            .drain(..)
+            .map(|path| path.to_string_lossy().into_owned())
+            .collect())
+    }
 }
 
 impl AppState {
@@ -95,10 +129,43 @@ impl AppState {
 }
 
 pub fn run() {
+    let pending_torrent_files = Arc::new(Mutex::new(VecDeque::new()));
+    let secondary_pending_files = Arc::clone(&pending_torrent_files);
+
     tauri::Builder::default()
+        .plugin(tauri_plugin_single_instance::init(move |app, args, cwd| {
+            let paths = torrent_paths_from_args(args, Path::new(&cwd));
+            if !paths.is_empty() {
+                match secondary_pending_files.lock() {
+                    Ok(mut pending) => pending.extend(paths),
+                    Err(error) => {
+                        eprintln!("Failed to queue torrent file opened with ORBIT: {error}");
+                        return;
+                    }
+                }
+                if let Err(error) = app.emit("orbit-open-torrent-files", ()) {
+                    eprintln!("Failed to notify ORBIT about an opened torrent file: {error}");
+                }
+                if let Some(window) = app.get_webview_window("main") {
+                    let _ = window.show();
+                    let _ = window.set_focus();
+                }
+            }
+        }))
         .plugin(tauri_plugin_dialog::init())
         .plugin(tauri_plugin_notification::init())
-        .setup(|app| {
+        .setup(move |app| {
+            let startup_paths = torrent_paths_from_args(
+                std::env::args_os()
+                    .map(|argument| argument.to_string_lossy().into_owned())
+                    .collect::<Vec<_>>(),
+                &std::env::current_dir()?,
+            );
+            pending_torrent_files
+                .lock()
+                .map_err(|error| format!("Cannot queue startup torrent files: {error}"))?
+                .extend(startup_paths);
+
             let app_data_dir = app.path().app_local_data_dir()?;
             let legacy_download_dir = app
                 .path()
@@ -116,6 +183,7 @@ pub fn run() {
                 default_download_dir: downloads_dir,
                 legacy_default_download_dir: legacy_download_dir,
                 close_to_tray: AtomicBool::new(false),
+                pending_torrent_files: Arc::clone(&pending_torrent_files),
             };
             app.manage(state);
 
@@ -177,7 +245,8 @@ pub fn run() {
             commands::torrent_peers,
             commands::get_rate_limits,
             commands::set_rate_limits,
-            commands::set_close_to_tray
+            commands::set_close_to_tray,
+            commands::take_pending_torrent_files
         ])
         .run(tauri::generate_context!())
         .expect("error while running ORBIT");
@@ -193,6 +262,28 @@ mod tests {
         assert_eq!(
             application_download_directory(executable),
             Some(PathBuf::from(r"H:\Games\ORBIT\Downloads"))
+        );
+    }
+
+    #[test]
+    fn startup_arguments_only_queue_torrent_files_and_resolve_relative_paths() {
+        let cwd = Path::new(r"C:\Users\user\Downloads");
+        let paths = torrent_paths_from_args(
+            [
+                r"C:\Program Files\ORBIT\orbit.exe".to_owned(),
+                "movie.TORRENT".to_owned(),
+                "notes.txt".to_owned(),
+                r"D:\Torrents\linux.torrent".to_owned(),
+            ],
+            cwd,
+        );
+
+        assert_eq!(
+            paths,
+            [
+                cwd.join("movie.TORRENT"),
+                PathBuf::from(r"D:\Torrents\linux.torrent")
+            ]
         );
     }
 
