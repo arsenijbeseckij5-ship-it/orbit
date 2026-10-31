@@ -2,6 +2,10 @@
 
 ORBIT is a Windows-first BitTorrent desktop client built with Tauri 2, React, TypeScript, and the `librqbit` engine.
 
+## Download and install
+
+Download the Windows installer (`ORBIT_*_x64_en-US.msi`) from the [latest GitHub release](https://github.com/arsenijbeseckij5-ship-it/orbit/releases/latest), then open it and follow the setup steps. The installer includes the WebView2 runtime needed by ORBIT. The standalone `orbit.exe` is also available on the release page, but requires WebView2 to already be installed. GitHub's **Code → Download ZIP** contains source code, not the ready-to-run app.
+
 ## Architecture
 
 | Approach | Trade-off |
