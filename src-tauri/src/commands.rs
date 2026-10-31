@@ -1,4 +1,5 @@
 use std::collections::HashSet;
+use std::num::NonZeroU32;
 use std::path::{Path, PathBuf};
 use std::process::Command;
 
@@ -29,6 +30,34 @@ pub struct TorrentRow {
     eta: Option<String>,
     finished: bool,
     error: Option<String>,
+}
+
+#[derive(Serialize)]
+#[serde(rename_all = "camelCase")]
+pub struct TorrentFileRow {
+    id: usize,
+    name: String,
+    length: u64,
+    included: bool,
+}
+
+#[derive(Serialize)]
+#[serde(rename_all = "camelCase")]
+pub struct PeerRow {
+    address: String,
+    state: &'static str,
+    client_name: Option<String>,
+    connection_kind: Option<String>,
+    downloaded_bytes: u64,
+    uploaded_bytes: u64,
+    errors: u32,
+}
+
+#[derive(Serialize)]
+#[serde(rename_all = "camelCase")]
+pub struct RateLimits {
+    download_bps: Option<u32>,
+    upload_bps: Option<u32>,
 }
 
 fn map_torrent(torrent: librqbit::api::TorrentDetailsResponse) -> Result<TorrentRow, String> {
@@ -83,6 +112,116 @@ pub async fn list_torrents(state: State<'_, AppState>) -> Result<Vec<TorrentRow>
         .into_iter()
         .map(map_torrent)
         .collect()
+}
+
+#[tauri::command]
+pub async fn torrent_files(
+    state: State<'_, AppState>,
+    id: usize,
+) -> Result<Vec<TorrentFileRow>, String> {
+    let details = state
+        .api()
+        .await?
+        .api_torrent_details(TorrentIdOrHash::Id(id))
+        .map_err(|error| format!("Не удалось получить список файлов торрента: {error:#}"))?;
+
+    Ok(details
+        .files
+        .unwrap_or_default()
+        .into_iter()
+        .enumerate()
+        .filter(|(_, file)| !file.attributes.padding)
+        .map(|(id, file)| TorrentFileRow {
+            id,
+            name: file.name,
+            length: file.length,
+            included: file.included,
+        })
+        .collect())
+}
+
+#[tauri::command]
+pub async fn set_torrent_files(
+    state: State<'_, AppState>,
+    id: usize,
+    included_file_ids: Vec<usize>,
+) -> Result<(), String> {
+    let included_file_ids = validate_included_file_ids(included_file_ids)?;
+
+    state
+        .api()
+        .await?
+        .api_torrent_action_update_only_files(TorrentIdOrHash::Id(id), &included_file_ids)
+        .await
+        .map(|_| ())
+        .map_err(|error| format!("Не удалось изменить список файлов: {error:#}"))
+}
+
+fn validate_included_file_ids(included_file_ids: Vec<usize>) -> Result<HashSet<usize>, String> {
+    let included_file_ids = included_file_ids.into_iter().collect::<HashSet<_>>();
+    if included_file_ids.is_empty() {
+        return Err("Оставьте выбранным хотя бы один файл.".to_owned());
+    }
+    Ok(included_file_ids)
+}
+
+#[tauri::command]
+pub async fn torrent_peers(state: State<'_, AppState>, id: usize) -> Result<Vec<PeerRow>, String> {
+    let snapshot = state
+        .api()
+        .await?
+        .api_peer_stats(TorrentIdOrHash::Id(id), Default::default())
+        .map_err(|error| format!("Не удалось получить сведения о пирах: {error:#}"))?;
+
+    let mut peers = snapshot
+        .peers
+        .into_iter()
+        .map(|(address, peer)| PeerRow {
+            address,
+            state: peer.state,
+            client_name: peer.client_name,
+            connection_kind: peer.conn_kind.map(|kind| format!("{kind:?}")),
+            downloaded_bytes: peer.counters.fetched_bytes,
+            uploaded_bytes: peer.counters.uploaded_bytes,
+            errors: peer.counters.errors,
+        })
+        .collect::<Vec<_>>();
+    peers.sort_by(|left, right| left.address.cmp(&right.address));
+    Ok(peers)
+}
+
+#[tauri::command]
+pub async fn get_rate_limits(state: State<'_, AppState>) -> Result<RateLimits, String> {
+    let limits = state.api().await?.session().ratelimits.get_config();
+    Ok(RateLimits {
+        download_bps: limits.download_bps.map(NonZeroU32::get),
+        upload_bps: limits.upload_bps.map(NonZeroU32::get),
+    })
+}
+
+#[tauri::command]
+pub async fn set_rate_limits(
+    state: State<'_, AppState>,
+    download_bps: Option<u32>,
+    upload_bps: Option<u32>,
+) -> Result<(), String> {
+    let session = state.api().await?;
+    session
+        .session()
+        .ratelimits
+        .set_download_bps(download_bps.and_then(NonZeroU32::new));
+    session
+        .session()
+        .ratelimits
+        .set_upload_bps(upload_bps.and_then(NonZeroU32::new));
+    Ok(())
+}
+
+#[tauri::command]
+pub fn set_close_to_tray(state: State<'_, AppState>, enabled: bool) {
+    state
+        .close_to_tray
+        .store(enabled, std::sync::atomic::Ordering::Relaxed);
 }
 
 #[tauri::command]
@@ -457,6 +596,15 @@ mod tests {
     }
 
     #[test]
+    fn file_selection_requires_at_least_one_file_and_deduplicates_ids() {
+        assert!(validate_included_file_ids(Vec::new()).is_err());
+        assert_eq!(
+            validate_included_file_ids(vec![1, 1, 2]).unwrap(),
+            HashSet::from([1, 2])
+        );
+    }
+
+    #[test]
     fn rejects_torrent_file_paths_that_escape_the_output_folder() {
         let root = Path::new(r"C:\Downloads");
         assert!(torrent_file_path(root, &["..".to_owned(), "outside.txt".to_owned()]).is_err());
@@ -478,6 +626,9 @@ mod tests {
         let downloads = root.join("downloads");
         tokio::fs::create_dir_all(&source).await.unwrap();
         tokio::fs::write(source.join("payload.bin"), b"verified local torrent")
+            .await
+            .unwrap();
+        tokio::fs::write(source.join("skip.bin"), b"not selected")
             .await
             .unwrap();
         let keep_file = downloads.join("source").join("keep.txt");
@@ -543,7 +694,53 @@ mod tests {
         .expect("torrent did not finish initialization");
         assert_eq!(row.name, "source");
         assert_eq!(row.status, "downloading");
-        assert_eq!(row.total_bytes, b"verified local torrent".len() as u64);
+        assert_eq!(
+            row.total_bytes,
+            (b"verified local torrent".len() + b"not selected".len()) as u64
+        );
+
+        let details = api
+            .api_torrent_details(TorrentIdOrHash::Id(row.id))
+            .unwrap();
+        let files = details.files.as_ref().unwrap();
+        assert_eq!(files.len(), 2);
+        let selected_file_id = files
+            .iter()
+            .position(|file| file.name.ends_with("payload.bin"))
+            .unwrap();
+        api.api_torrent_action_update_only_files(
+            TorrentIdOrHash::Id(row.id),
+            &HashSet::from([selected_file_id]),
+        )
+        .await
+        .unwrap();
+        let updated_files = api
+            .api_torrent_details(TorrentIdOrHash::Id(row.id))
+            .unwrap()
+            .files
+            .unwrap();
+        assert!(updated_files[selected_file_id].included);
+        assert!(
+            updated_files
+                .iter()
+                .enumerate()
+                .filter(|(index, _)| *index != selected_file_id)
+                .all(|(_, file)| !file.included)
+        );
+        assert!(
+            api.api_peer_stats(TorrentIdOrHash::Id(row.id), Default::default())
+                .is_ok(),
+            "peer diagnostics should work for a live torrent"
+        );
+        session
+            .ratelimits
+            .set_download_bps(Some(NonZeroU32::new(1_024).unwrap()));
+        session
+            .ratelimits
+            .set_upload_bps(Some(NonZeroU32::new(2_048).unwrap()));
+        let limits = session.ratelimits.get_config();
+        assert_eq!(limits.download_bps.map(NonZeroU32::get), Some(1_024));
+        assert_eq!(limits.upload_bps.map(NonZeroU32::get), Some(2_048));
 
         api.api_torrent_action_pause(TorrentIdOrHash::Id(row.id))
             .await
@@ -577,7 +774,7 @@ mod tests {
         let payload_file = details
             .files
             .as_ref()
-            .and_then(|files| files.first())
+            .and_then(|files| files.iter().find(|file| file.name.ends_with("payload.bin")))
             .expect("generated torrent should expose its payload file");
         let payload_path =
             torrent_file_path(Path::new(&details.output_folder), &payload_file.components).unwrap();

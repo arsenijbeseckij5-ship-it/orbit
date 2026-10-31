@@ -13,10 +13,11 @@ import { createPortal } from "react-dom";
 import { useEffect, useMemo, useRef, useState } from "react";
 import type { Torrent } from "../types/torrent";
 
-export type SortColumn = "name" | "status" | "progress" | "speed" | "eta";
+export type SortColumn = "queue" | "name" | "status" | "progress" | "speed" | "eta";
 
 interface TorrentTableProps {
   torrents: Torrent[];
+  queueOrder: string[];
   selectedIds: Set<number>;
   onSelectionChange: (ids: Set<number>) => void;
   onSelect: (torrent: Torrent) => void;
@@ -76,6 +77,7 @@ function FileIcon({ name }: { name: string }) {
 
 export function TorrentTable({
   torrents,
+  queueOrder,
   selectedIds,
   onSelectionChange,
   onSelect,
@@ -84,7 +86,7 @@ export function TorrentTable({
   onRemoveTorrent,
   actionsDisabled,
 }: TorrentTableProps) {
-  const [sortColumn, setSortColumn] = useState<SortColumn>("name");
+  const [sortColumn, setSortColumn] = useState<SortColumn>("queue");
   const [sortAscending, setSortAscending] = useState(true);
   const [contextMenu, setContextMenu] = useState<ContextMenuState | null>(null);
   const contextMenuRef = useRef<HTMLDivElement>(null);
@@ -140,6 +142,12 @@ export function TorrentTable({
   const sortedTorrents = useMemo(() => {
     const sorted = [...torrents].sort((a, b) => {
       switch (sortColumn) {
+        case "queue": {
+          const left = queueOrder.indexOf(a.infoHash);
+          const right = queueOrder.indexOf(b.infoHash);
+          return (left < 0 ? Number.MAX_SAFE_INTEGER : left) -
+            (right < 0 ? Number.MAX_SAFE_INTEGER : right);
+        }
         case "name":
           return a.name.localeCompare(b.name);
         case "status":
@@ -153,7 +161,7 @@ export function TorrentTable({
       }
     });
     return sortAscending ? sorted : sorted.reverse();
-  }, [sortAscending, sortColumn, torrents]);
+  }, [queueOrder, sortAscending, sortColumn, torrents]);
 
   function sortBy(column: SortColumn) {
     if (sortColumn === column) {
@@ -199,6 +207,7 @@ export function TorrentTable({
                 type="checkbox"
               />
             </th>
+            <th className="queue-column">{heading("№", "queue")}</th>
             <th>{heading("Название", "name")}</th>
             <th>{heading("Статус", "status")}</th>
             <th>{heading("Прогресс", "progress")}</th>
@@ -237,6 +246,9 @@ export function TorrentTable({
                     onClick={(event) => event.stopPropagation()}
                     type="checkbox"
                   />
+                </td>
+                <td className="queue-column">
+                  {queueOrder.indexOf(torrent.infoHash) + 1 || "—"}
                 </td>
                 <td className="torrent-name-cell">
                   <span className={`torrent-file-icon ${torrent.status}`}>

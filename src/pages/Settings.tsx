@@ -6,6 +6,7 @@ import {
   RotateCcw,
 } from "lucide-react";
 import { useState } from "react";
+import type { RateLimits } from "../services/torrentService";
 import {
   chooseDownloadFolder,
   defaultDownloadFolder,
@@ -14,18 +15,55 @@ import {
 
 interface SettingsProps {
   initialDownloadFolder: string;
+  initialRateLimits: RateLimits;
+  initialMaxActiveDownloads: number;
+  initialCloseToTray: boolean;
+  initialNotifications: boolean;
   onBack: () => void;
-  onSaveFolder: (folder: string) => void;
+  onSavePreferences: (
+    folder: string,
+    rateLimits: RateLimits,
+    maxActiveDownloads: number,
+    closeToTray: boolean,
+    notifications: boolean,
+  ) => Promise<void>;
   notify: (message: string, kind?: "success" | "error") => void;
+}
+
+function formatLimit(bps: number | null): string {
+  return bps ? (bps / (1024 * 1024)).toFixed(2) : "";
+}
+
+function parseLimit(value: string): number | null {
+  const parsed = Number(value);
+  if (!value.trim() || parsed === 0) return null;
+  if (!Number.isFinite(parsed) || parsed < 0) {
+    throw new Error("Лимит скорости должен быть положительным числом.");
+  }
+  const bytesPerSecond = Math.round(parsed * 1024 * 1024);
+  if (bytesPerSecond > 4_294_967_295) {
+    throw new Error("Указанный лимит слишком велик.");
+  }
+  return bytesPerSecond;
 }
 
 export function Settings({
   initialDownloadFolder,
+  initialRateLimits,
+  initialMaxActiveDownloads,
+  initialCloseToTray,
+  initialNotifications,
   onBack,
-  onSaveFolder,
+  onSavePreferences,
   notify,
 }: SettingsProps) {
   const [folder, setFolder] = useState(initialDownloadFolder);
+  const [downloadLimit, setDownloadLimit] = useState(formatLimit(initialRateLimits.downloadBps));
+  const [uploadLimit, setUploadLimit] = useState(formatLimit(initialRateLimits.uploadBps));
+  const [maxActiveDownloads, setMaxActiveDownloads] = useState(initialMaxActiveDownloads);
+  const [closeToTray, setCloseToTray] = useState(initialCloseToTray);
+  const [notifications, setNotifications] = useState(initialNotifications);
+  const [saving, setSaving] = useState(false);
 
   async function browseFolder() {
     try {
@@ -76,14 +114,27 @@ export function Settings({
     }
   }
 
-  function save() {
+  async function save() {
     const trimmed = folder.trim();
     if (!trimmed) {
       notify("Укажите папку для загрузок.", "error");
       return;
     }
-    onSaveFolder(trimmed);
-    notify("Папка загрузки сохранена.", "success");
+    try {
+      setSaving(true);
+      await onSavePreferences(
+        trimmed,
+        { downloadBps: parseLimit(downloadLimit), uploadBps: parseLimit(uploadLimit) },
+        maxActiveDownloads,
+        closeToTray,
+        notifications,
+      );
+      notify("Настройки сохранены.", "success");
+    } catch (error) {
+      notify(error instanceof Error ? error.message : String(error), "error");
+    } finally {
+      setSaving(false);
+    }
   }
 
   return (
@@ -160,12 +211,88 @@ export function Settings({
           </button>
         </div>
         <div className="settings-divider" />
+        <div className="settings-section-heading">
+          <span className="settings-icon"><HardDriveDownload size={18} /></span>
+          <div>
+            <h2>Скорость и очередь</h2>
+            <p>Ограничения применяются сразу к загрузке и раздаче.</p>
+          </div>
+        </div>
+        <div className="settings-grid">
+          <label className="settings-field">
+            <span>Лимит загрузки, МиБ/с</span>
+            <input
+              className="text-input"
+              min="0"
+              onChange={(event) => setDownloadLimit(event.currentTarget.value)}
+              placeholder="Без ограничений"
+              step="0.1"
+              type="number"
+              value={downloadLimit}
+            />
+          </label>
+          <label className="settings-field">
+            <span>Лимит отдачи, МиБ/с</span>
+            <input
+              className="text-input"
+              min="0"
+              onChange={(event) => setUploadLimit(event.currentTarget.value)}
+              placeholder="Без ограничений"
+              step="0.1"
+              type="number"
+              value={uploadLimit}
+            />
+          </label>
+          <label className="settings-field">
+            <span>Одновременные загрузки</span>
+            <select
+              className="text-input"
+              onChange={(event) => setMaxActiveDownloads(Number(event.currentTarget.value))}
+              value={maxActiveDownloads}
+            >
+              <option value={0}>Без ограничения</option>
+              {Array.from({ length: 20 }, (_, index) => index + 1).map((count) => (
+                <option key={count} value={count}>{count}</option>
+              ))}
+            </select>
+          </label>
+        </div>
+        <p className="field-hint">
+          Очередь упорядочивается в панели сведений торрента. Пауза вручную остаётся паузой и не снимается очередью.
+        </p>
+        <div className="settings-divider" />
+        <div className="settings-section-heading">
+          <span className="settings-icon"><FolderOpen size={18} /></span>
+          <div>
+            <h2>Уведомления и окно</h2>
+            <p>Управление завершёнными загрузками и поведением окна.</p>
+          </div>
+        </div>
+        <div className="settings-toggle-list">
+          <label className="settings-toggle">
+            <input
+              checked={notifications}
+              onChange={(event) => setNotifications(event.currentTarget.checked)}
+              type="checkbox"
+            />
+            <span>Уведомлять о завершении загрузки</span>
+          </label>
+          <label className="settings-toggle">
+            <input
+              checked={closeToTray}
+              onChange={(event) => setCloseToTray(event.currentTarget.checked)}
+              type="checkbox"
+            />
+            <span>Сворачивать в системный трей при закрытии</span>
+          </label>
+        </div>
+        <div className="settings-divider" />
         <div className="settings-note">
           <span className="note-dot" />
           Сессия и очередь сохраняются локально на этом устройстве.
         </div>
         <div className="settings-actions">
-          <button className="button button-primary" onClick={save} type="button">
+          <button className="button button-primary" disabled={saving} onClick={() => void save()} type="button">
             Сохранить настройки
           </button>
         </div>

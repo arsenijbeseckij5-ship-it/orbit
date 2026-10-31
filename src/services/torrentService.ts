@@ -2,6 +2,28 @@ import { invoke, isTauri } from "@tauri-apps/api/core";
 import { open } from "@tauri-apps/plugin-dialog";
 import type { Torrent } from "../types/torrent";
 
+export interface TorrentFile {
+  id: number;
+  name: string;
+  length: number;
+  included: boolean;
+}
+
+export interface TorrentPeer {
+  address: string;
+  state: string;
+  clientName: string | null;
+  connectionKind: string | null;
+  downloadedBytes: number;
+  uploadedBytes: number;
+  errors: number;
+}
+
+export interface RateLimits {
+  downloadBps: number | null;
+  uploadBps: number | null;
+}
+
 export function isDesktopRuntime(): boolean {
   return isTauri();
 }
@@ -65,4 +87,31 @@ export function openTorrentFolder(id: number): Promise<void> {
 
 export function openDownloadFolder(folder: string): Promise<void> {
   return invoke("open_download_folder", { folder });
+}
+
+export function getTorrentFiles(id: number): Promise<TorrentFile[]> {
+  return invoke("torrent_files", { id });
+}
+
+export function setTorrentFiles(id: number, includedFileIds: number[]): Promise<void> {
+  return invoke("set_torrent_files", { id, includedFileIds });
+}
+
+export function getTorrentPeers(id: number): Promise<TorrentPeer[]> {
+  return invoke("torrent_peers", { id });
+}
+
+export function getRateLimits(): Promise<RateLimits> {
+  return invoke("get_rate_limits");
+}
+
+export function setRateLimits(limits: RateLimits): Promise<void> {
+  return invoke("set_rate_limits", {
+    downloadBps: limits.downloadBps,
+    uploadBps: limits.uploadBps,
+  });
+}
+
+export function setCloseToTray(enabled: boolean): Promise<void> {
+  return invoke("set_close_to_tray", { enabled });
 }

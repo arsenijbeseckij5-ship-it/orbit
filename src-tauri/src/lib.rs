@@ -1,10 +1,15 @@
 mod commands;
 
 use std::path::PathBuf;
+use std::sync::atomic::{AtomicBool, Ordering};
 use std::time::{SystemTime, UNIX_EPOCH};
 
 use librqbit::{Api, Session, SessionOptions, SessionPersistenceConfig};
-use tauri::Manager;
+use tauri::{
+    Manager, WindowEvent,
+    menu::{Menu, MenuItem},
+    tray::TrayIconBuilder,
+};
 use tokio::sync::OnceCell;
 
 fn application_download_directory(executable: &std::path::Path) -> Option<PathBuf> {
@@ -56,6 +61,7 @@ pub struct AppState {
     session_dir: PathBuf,
     default_download_dir: PathBuf,
     legacy_default_download_dir: PathBuf,
+    close_to_tray: AtomicBool,
 }
 
 impl AppState {
@@ -91,6 +97,7 @@ impl AppState {
 pub fn run() {
     tauri::Builder::default()
         .plugin(tauri_plugin_dialog::init())
+        .plugin(tauri_plugin_notification::init())
         .setup(|app| {
             let app_data_dir = app.path().app_local_data_dir()?;
             let legacy_download_dir = app
@@ -108,8 +115,49 @@ pub fn run() {
                 session_dir: app_data_dir.join("session"),
                 default_download_dir: downloads_dir,
                 legacy_default_download_dir: legacy_download_dir,
+                close_to_tray: AtomicBool::new(false),
             };
             app.manage(state);
+
+            let open = MenuItem::with_id(app, "open", "Открыть ORBIT", true, None::<&str>)?;
+            let quit = MenuItem::with_id(app, "quit", "Выход", true, None::<&str>)?;
+            let menu = Menu::with_items(app, &[&open, &quit])?;
+            let icon = app
+                .default_window_icon()
+                .cloned()
+                .ok_or_else(|| std::io::Error::other("ORBIT tray icon is missing"))?;
+            TrayIconBuilder::new()
+                .menu(&menu)
+                .icon(icon)
+                .tooltip("ORBIT")
+                .on_menu_event(|app, event| match event.id().as_ref() {
+                    "open" => {
+                        if let Some(window) = app.get_webview_window("main") {
+                            let _ = window.show();
+                            let _ = window.set_focus();
+                        }
+                    }
+                    "quit" => app.exit(0),
+                    _ => {}
+                })
+                .build(app)?;
+
+            if let Some(window) = app.get_webview_window("main") {
+                let close_window = window.clone();
+                window.on_window_event(move |event| {
+                    if let WindowEvent::CloseRequested { api, .. } = event
+                        && close_window
+                            .state::<AppState>()
+                            .close_to_tray
+                            .load(Ordering::Relaxed)
+                    {
+                        api.prevent_close();
+                        if let Err(error) = close_window.hide() {
+                            eprintln!("Failed to hide ORBIT to tray: {error}");
+                        }
+                    }
+                });
+            }
             Ok(())
         })
         .invoke_handler(tauri::generate_handler![
@@ -123,7 +171,13 @@ pub fn run() {
             commands::remove_torrent,
             commands::remove_torrent_and_files,
             commands::open_torrent_folder,
-            commands::open_download_folder
+            commands::open_download_folder,
+            commands::torrent_files,
+            commands::set_torrent_files,
+            commands::torrent_peers,
+            commands::get_rate_limits,
+            commands::set_rate_limits,
+            commands::set_close_to_tray
         ])
         .run(tauri::generate_context!())
         .expect("error while running ORBIT");

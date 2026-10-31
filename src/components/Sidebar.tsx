@@ -4,6 +4,7 @@ import {
   CircleAlert,
   CirclePause,
   Download,
+  FolderOpen,
   LayoutGrid,
   ListTodo,
   Settings,
@@ -18,10 +19,12 @@ export type ViewFilter =
   | "completed"
   | "paused"
   | "seeding"
-  | "errors";
+  | "errors"
+  | `category:${string}`;
 
 interface SidebarProps {
   torrents: Torrent[];
+  categories: { name: string; count: number }[];
   filter: ViewFilter;
   settingsOpen: boolean;
   onFilterChange: (filter: ViewFilter) => void;
@@ -76,6 +79,7 @@ const filters: {
 
 export function Sidebar({
   torrents,
+  categories,
   filter,
   settingsOpen,
   onFilterChange,
@@ -107,6 +111,26 @@ export function Sidebar({
             <span className="nav-count">{count(torrents)}</span>
           </button>
         ))}
+        {categories.length > 0 && (
+          <div className="sidebar-category-section">
+            <div className="sidebar-section-label">КАТЕГОРИИ</div>
+            {categories.map((category) => {
+              const id = `category:${category.name}` as const;
+              return (
+                <button
+                  className={`nav-item ${filter === id && !settingsOpen ? "active" : ""}`}
+                  key={category.name}
+                  onClick={() => onFilterChange(id)}
+                  type="button"
+                >
+                  <FolderOpen size={17} strokeWidth={1.8} />
+                  <span>{category.name}</span>
+                  <span className="nav-count">{category.count}</span>
+                </button>
+              );
+            })}
+          </div>
+        )}
       </nav>
 
       <div className="sidebar-bottom">

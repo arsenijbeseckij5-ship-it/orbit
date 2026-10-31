@@ -16,8 +16,8 @@ Download the single `ORBIT_*_Full_Project.zip` file from the [latest GitHub rele
 
 ```text
 src/
-  components/  Sidebar, toolbar, torrent table, live speed chart, add dialog
-  pages/       Download settings
+  components/  Sidebar, toolbar, torrent table, torrent details, live speed chart
+  pages/       Download, transfer, queue, and desktop settings
   services/    Typed Tauri command client
   types/       Torrent snapshots
 src-tauri/
@@ -34,6 +34,11 @@ src-tauri/
 - Keep the torrent list, details, and chart in separate layout regions: enlarging the chart compresses the list instead of pushing or covering neighboring content.
 - Select all visible torrents, filter the library by incomplete, completed, paused, seeding, or error state, and clear completed entries without deleting downloaded data.
 - Pause, resume, and remove torrents. Removing torrent data is a separate, confirmed action.
+- Select individual files in a torrent and apply the selection to the running engine.
+- Inspect connected peers, their client names, transfer totals, and connection state for active torrents.
+- Set global upload/download speed limits and a maximum number of concurrent downloads.
+- Reorder the download queue, preserve manual pauses, and assign searchable local categories.
+- Show native completion notifications and optionally close the window to the system tray; tray menu actions reopen or quit ORBIT.
 - Delete torrent files after releasing the engine's file handles, while preserving unrelated files in the download folder.
 - Open a torrent's download folder from its right-click menu.
 - Persist the engine session between launches; choose, open, copy, or restore the default download folder in Settings. By default, new torrent data is stored in a `Downloads` folder beside the installed app; the previous default is migrated automatically while custom folders are kept.
@@ -42,7 +47,7 @@ src-tauri/
 
 The backend integration test creates a valid torrent locally and exercises real engine add, listing, pause, and resume calls without external peers. It does not claim to verify an end-to-end network transfer.
 
-This is the first working foundation, not a feature-complete BitTorrent client. Session resume uses `librqbit`'s local JSON persistence; the chosen download folder is stored in the WebView's local storage. SQLite has not been integrated. File selection, force recheck, peer and tracker inspection, per-torrent and global limits, categories, tray behavior, and installer signing are not implemented yet. No unsupported engine features are represented as available.
+This is a working foundation, not a feature-complete BitTorrent client. Session resume uses `librqbit`'s local JSON persistence; queue, limits, categories, and display preferences are stored in the WebView's local storage. SQLite has not been integrated. The current engine API does not expose a force-recheck action or tracker-state inspection, and per-torrent speed limits are not implemented. Peer details are available only while a torrent is active. No unsupported engine features are represented as available.
 
 ## Windows distribution
 
