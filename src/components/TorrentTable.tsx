@@ -208,11 +208,11 @@ export function TorrentTable({
               />
             </th>
             <th className="queue-column">{heading("№", "queue")}</th>
-            <th>{heading("Название", "name")}</th>
-            <th>{heading("Статус", "status")}</th>
-            <th>{heading("Прогресс", "progress")}</th>
-            <th>{heading("Скорость", "speed")}</th>
-            <th>{heading("Осталось", "eta")}</th>
+            <th className="torrent-name-heading">{heading("Название", "name")}</th>
+            <th className="status-heading">{heading("Статус", "status")}</th>
+            <th className="progress-heading">{heading("Прогресс", "progress")}</th>
+            <th className="speed-heading">{heading("Скорость", "speed")}</th>
+            <th className="eta-heading">{heading("Осталось", "eta")}</th>
             <th className="row-actions-column" />
           </tr>
         </thead>
@@ -251,17 +251,19 @@ export function TorrentTable({
                   {queueOrder.indexOf(torrent.infoHash) + 1 || "—"}
                 </td>
                 <td className="torrent-name-cell">
-                  <span className={`torrent-file-icon ${torrent.status}`}>
-                    <FileIcon name={torrent.name} />
-                  </span>
-                  <span className="torrent-title-stack">
-                    <span className="torrent-name" title={torrent.name}>
-                      {torrent.name}
+                  <div className="torrent-name-content">
+                    <span className={`torrent-file-icon ${torrent.status}`}>
+                      <FileIcon name={torrent.name} />
                     </span>
-                    <span className="torrent-subtitle">
-                      {formatBytes(torrent.totalBytes)} · {torrent.infoHash.slice(0, 8)}
+                    <span className="torrent-title-stack">
+                      <span className="torrent-name" title={torrent.name}>
+                        {torrent.name}
+                      </span>
+                      <span className="torrent-subtitle">
+                        {formatBytes(torrent.totalBytes)} · {torrent.infoHash.slice(0, 8)}
+                      </span>
                     </span>
-                  </span>
+                  </div>
                 </td>
                 <td>
                   <span className={`status-pill ${torrent.status}`}>

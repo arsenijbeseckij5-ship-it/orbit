@@ -15,6 +15,7 @@ import {
   X,
 } from "lucide-react";
 import { sendNotification } from "@tauri-apps/plugin-notification";
+import { listen } from "@tauri-apps/api/event";
 import type {
   CSSProperties,
   KeyboardEvent as ReactKeyboardEvent,
@@ -41,6 +42,7 @@ import {
   resumeTorrent,
   setCloseToTray,
   setRateLimits,
+  takePendingTorrentFiles,
   type RateLimits,
 } from "./services/torrentService";
 import { Settings } from "./pages/Settings";
@@ -170,6 +172,8 @@ export default function App() {
   const [busy, setBusy] = useState(false);
   const [settingsOpen, setSettingsOpen] = useState(false);
   const [downloadFolder, setDownloadFolder] = useState(readDownloadFolder);
+  const [downloadFolderReady, setDownloadFolderReady] = useState(false);
+  const [incomingTorrentFiles, setIncomingTorrentFiles] = useState<string[]>([]);
   const [rateLimits, setRateLimitsState] = useState<RateLimits>(() => ({
     downloadBps: readRateLimit("orbit.downloadLimitBps"),
     uploadBps: readRateLimit("orbit.uploadLimitBps"),
@@ -200,6 +204,7 @@ export default function App() {
   const queueSyncBusy = useRef(false);
   const queueError = useRef<string | null>(null);
   const initialFinishedSnapshot = useRef<Set<string> | null>(null);
+  const processingOpenedFiles = useRef(false);
 
   function persistSize(key: string, value: number) {
     try {
@@ -308,7 +313,10 @@ export default function App() {
   }, []);
 
   useEffect(() => {
-    if (!runtimeAvailable) return;
+    if (!runtimeAvailable) {
+      setDownloadFolderReady(true);
+      return;
+    }
     let cancelled = false;
     let firstLoad = true;
 
@@ -352,13 +360,98 @@ export default function App() {
           setDownloadFolder(savedFolder);
         }
       })
-      .catch((error: unknown) =>
-        notify(error instanceof Error ? error.message : String(error), "error"),
-      );
+      .catch((error: unknown) => {
+        notify(error instanceof Error ? error.message : String(error), "error");
+      })
+      .finally(() => {
+        if (!cancelled) setDownloadFolderReady(true);
+      });
     return () => {
       cancelled = true;
     };
   }, [notify, runtimeAvailable]);
+
+  useEffect(() => {
+    if (!runtimeAvailable) return;
+    let cancelled = false;
+    let unlisten: (() => void) | undefined;
+
+    const collectPendingFiles = async () => {
+      try {
+        const paths = await takePendingTorrentFiles();
+        if (!cancelled && paths.length > 0) {
+          setIncomingTorrentFiles((current) => [...current, ...paths]);
+        }
+      } catch (error) {
+        if (!cancelled) {
+          notify(
+            error instanceof Error ? error.message : String(error),
+            "error",
+          );
+        }
+      }
+    };
+
+    const subscribe = async () => {
+      unlisten = await listen("orbit-open-torrent-files", () => {
+        void collectPendingFiles();
+      });
+      if (cancelled) {
+        unlisten();
+        return;
+      }
+      await collectPendingFiles();
+    };
+
+    void subscribe().catch((error: unknown) => {
+      if (!cancelled) {
+        notify(error instanceof Error ? error.message : String(error), "error");
+      }
+    });
+
+    return () => {
+      cancelled = true;
+      unlisten?.();
+    };
+  }, [notify, runtimeAvailable]);
+
+  useEffect(() => {
+    if (
+      !runtimeAvailable ||
+      !downloadFolderReady ||
+      incomingTorrentFiles.length === 0 ||
+      processingOpenedFiles.current
+    ) {
+      return;
+    }
+
+    processingOpenedFiles.current = true;
+    const files = [...incomingTorrentFiles];
+    void (async () => {
+      try {
+        for (const path of files) {
+          try {
+            await addTorrentFile(path, downloadFolder);
+            notify(`Торрент добавлен: ${path.split(/[\\/]/).pop() ?? path}`);
+          } catch (error) {
+            notify(
+              error instanceof Error ? error.message : String(error),
+              "error",
+            );
+          }
+          setIncomingTorrentFiles((current) => current.slice(1));
+        }
+      } finally {
+        processingOpenedFiles.current = false;
+      }
+    })();
+  }, [
+    downloadFolder,
+    downloadFolderReady,
+    incomingTorrentFiles,
+    notify,
+    runtimeAvailable,
+  ]);
 
   useEffect(() => {
     if (!runtimeAvailable) return;

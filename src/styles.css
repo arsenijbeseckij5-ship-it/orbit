@@ -663,25 +663,25 @@ textarea:focus-visible {
   padding-left: 14px;
 }
 
-.torrent-table th:nth-child(2) {
+.torrent-table .torrent-name-heading {
   min-width: 210px;
   width: 28%;
 }
 
-.torrent-table th:nth-child(3) {
+.torrent-table .status-heading {
   width: 108px;
 }
 
-.torrent-table th:nth-child(4) {
+.torrent-table .progress-heading {
   min-width: 144px;
   width: 19%;
 }
 
-.torrent-table th:nth-child(5) {
+.torrent-table .speed-heading {
   min-width: 108px;
 }
 
-.torrent-table th:nth-child(6) {
+.torrent-table .eta-heading {
   min-width: 100px;
 }
 
@@ -747,12 +747,12 @@ textarea:focus-visible {
   max-width: 300px;
 }
 
-.torrent-name-cell,
+.torrent-name-content,
 .torrent-title-stack {
   overflow: hidden;
 }
 
-.torrent-name-cell {
+.torrent-name-content {
   display: flex;
   align-items: center;
   gap: 10px;
@@ -885,7 +885,7 @@ textarea:focus-visible {
 }
 
 .download-arrow {
-  color: #65c7e7;
+  color: #72c59d;
 }
 
 .upload-speed {
@@ -1745,7 +1745,7 @@ textarea:focus-visible {
     min-width: 160px;
   }
 
-  .torrent-table th:nth-child(2) {
+  .torrent-table .torrent-name-heading {
     min-width: 175px;
   }
 

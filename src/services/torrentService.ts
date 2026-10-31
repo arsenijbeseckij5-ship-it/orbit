@@ -51,6 +51,10 @@ export function addTorrentFile(
   return invoke("add_torrent_file", { path, outputFolder });
 }
 
+export function takePendingTorrentFiles(): Promise<string[]> {
+  return invoke("take_pending_torrent_files");
+}
+
 export async function chooseTorrentFile(): Promise<string | null> {
   const selected = await open({
     multiple: false,
