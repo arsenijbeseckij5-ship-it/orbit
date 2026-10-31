@@ -4,7 +4,7 @@ ORBIT is a Windows-first BitTorrent desktop client built with Tauri 2, React, Ty
 
 ## Download and install
 
-Download the Windows installer (`ORBIT_*_x64_en-US.msi`) from the [latest GitHub release](https://github.com/arsenijbeseckij5-ship-it/orbit/releases/latest), then open it and follow the setup steps. The installer includes the WebView2 runtime needed by ORBIT. The standalone `orbit.exe` is also available on the release page, but requires WebView2 to already be installed. GitHub's **Code → Download ZIP** contains source code, not the ready-to-run app.
+Download the single `ORBIT_*_Full_Project.zip` file from the [latest GitHub release](https://github.com/arsenijbeseckij5-ship-it/orbit/releases/latest) and extract it. It includes the full project source and a ready-to-run `orbit.exe` at the archive root; open the executable to launch ORBIT. The app needs the Microsoft Edge WebView2 Runtime, available from [Microsoft](https://developer.microsoft.com/microsoft-edge/webview2/), but no Rust, Node.js, or C++ build tools. GitHub's **Code → Download ZIP** is source-only and does not include the executable.
 
 ## Architecture
 
@@ -30,6 +30,7 @@ src-tauri/
 - Add Magnet links and local `.torrent` files to a real `librqbit` session.
 - View engine-reported progress, transfer rates, ETA, completion, and errors.
 - Plot live aggregate download and upload rates at the bottom of the window (green for downloads, blue for uploads).
+- Resize the left sidebar and bottom speed chart by dragging their dividers; dimensions stay within safe limits and are remembered between launches.
 - Pause, resume, and remove torrents. Removing torrent data is a separate, confirmed action.
 - Delete torrent files after releasing the engine's file handles, while preserving unrelated files in the download folder.
 - Open a torrent's download folder from its right-click menu.
@@ -43,7 +44,7 @@ This is the first working foundation, not a feature-complete BitTorrent client. 
 
 ## Windows distribution
 
-The Windows x64 MSI installs ORBIT and embeds Microsoft's WebView2 offline installer. It does not need Rust, Node.js, C++ build tools, or an internet connection to install WebView2. The MSI installs per machine and can require administrator approval. The standalone `orbit.exe` is the application binary (not an installer); it needs the Microsoft Edge WebView2 Runtime to be present on the PC. Tauri statically links the Visual C++ runtime for the app, so a separate VC++ Redistributable is not required for this executable. Supported target: Windows 10/11 x64.
+The Windows x64 MSI build embeds Microsoft's WebView2 offline installer and installs per machine, which can require administrator approval. The current GitHub release distributes the standalone `orbit.exe` in the full-project ZIP; it needs the Microsoft Edge WebView2 Runtime to be present on the PC. Tauri statically links the Visual C++ runtime for the app, so a separate VC++ Redistributable is not required for this executable. Supported target: Windows 10/11 x64.
 
 The MSI places `orbit.exe` in the selected installation directory (for example, `H:\\Games\\ORBIT`) and creates Start Menu shortcuts separately. The app code and frontend are bundled in that executable; source code and build tools are not runtime files. New torrent payloads go under `<installation directory>\\Downloads`; if Windows does not allow writing there (such as a default `Program Files` install), ORBIT uses the user's `Downloads\\ORBIT` folder instead. Session/settings data remain in the current Windows user profile.
 

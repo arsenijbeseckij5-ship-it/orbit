@@ -56,20 +56,82 @@ textarea:focus-visible {
 .app-shell {
   display: flex;
   min-height: 100vh;
+  --sidebar-width: 228px;
+  --chart-height: 110px;
   background:
     radial-gradient(ellipse at 68% -32%, rgba(35, 91, 112, 0.09), transparent 50%),
     #111317;
 }
 
+.app-shell.resizing-column,
+.app-shell.resizing-row {
+  user-select: none;
+}
+
+.app-shell.resizing-column,
+.app-shell.resizing-column * {
+  cursor: col-resize !important;
+}
+
+.app-shell.resizing-row,
+.app-shell.resizing-row * {
+  cursor: row-resize !important;
+}
+
 .sidebar {
   position: relative;
   display: flex;
-  flex: 0 0 228px;
+  flex: 0 0 var(--sidebar-width);
   flex-direction: column;
   min-height: 100vh;
   padding: 22px 14px 14px;
   background: rgba(20, 22, 27, 0.95);
-  border-right: 1px solid #25282e;
+}
+
+.resize-handle {
+  position: relative;
+  z-index: 2;
+  flex: 0 0 auto;
+  padding: 0;
+  background: transparent;
+  border: 0;
+  touch-action: none;
+  user-select: none;
+}
+
+.resize-handle:focus-visible {
+  outline: 2px solid rgba(97, 197, 232, 0.8);
+  outline-offset: -2px;
+}
+
+.resize-handle::after {
+  position: absolute;
+  display: block;
+  background: #292d34;
+  content: "";
+  transition: background 130ms ease, box-shadow 130ms ease;
+}
+
+.resize-handle:hover::after,
+.resize-handle:focus-visible::after,
+.app-shell.resizing-column .column-resizer::after,
+.app-shell.resizing-row .chart-resizer::after {
+  background: #55b9d9;
+  box-shadow: 0 0 8px rgba(85, 185, 217, 0.3);
+}
+
+.column-resizer {
+  width: 9px;
+  margin-left: -4px;
+  margin-right: -5px;
+  cursor: col-resize;
+}
+
+.column-resizer::after {
+  top: 0;
+  bottom: 0;
+  left: 4px;
+  width: 1px;
 }
 
 .brand {
@@ -236,6 +298,25 @@ textarea:focus-visible {
   min-width: 0;
   min-height: 100vh;
   padding: 30px 32px 0;
+}
+
+.bottom-dock {
+  flex: 0 0 auto;
+  margin: auto -32px 0;
+}
+
+.chart-resizer {
+  width: 100%;
+  height: 9px;
+  margin-bottom: -1px;
+  cursor: row-resize;
+}
+
+.chart-resizer::after {
+  top: 4px;
+  right: 0;
+  left: 0;
+  height: 1px;
 }
 
 .page-header {
@@ -936,8 +1017,7 @@ textarea:focus-visible {
 .status-bar {
   display: flex;
   align-items: center;
-  min-height: 104px;
-  margin: auto -32px 0;
+  min-height: calc(var(--chart-height) + 38px);
   padding: 10px 33px;
   gap: 19px;
   color: #949ca6;
@@ -969,6 +1049,8 @@ textarea:focus-visible {
   display: grid;
   flex: 0 1 320px;
   min-width: 180px;
+  min-height: 0;
+  grid-template-rows: auto minmax(0, 1fr);
   gap: 5px;
 }
 
@@ -992,7 +1074,8 @@ textarea:focus-visible {
 .speed-chart-plot {
   display: block;
   width: 100%;
-  height: 72px;
+  height: var(--chart-height);
+  min-height: 0;
   overflow: visible;
 }
 
@@ -1414,11 +1497,14 @@ textarea:focus-visible {
   }
 
   .status-bar {
-    margin-right: -22px;
-    margin-left: -22px;
     padding-right: 23px;
     padding-left: 23px;
     gap: 11px;
+  }
+
+  .bottom-dock {
+    margin-right: -22px;
+    margin-left: -22px;
   }
 
   .speed-chart {

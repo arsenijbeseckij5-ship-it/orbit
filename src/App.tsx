@@ -14,7 +14,12 @@ import {
   Trash2,
   X,
 } from "lucide-react";
-import { useCallback, useEffect, useMemo, useState } from "react";
+import type {
+  CSSProperties,
+  KeyboardEvent as ReactKeyboardEvent,
+  PointerEvent as ReactPointerEvent,
+} from "react";
+import { useCallback, useEffect, useMemo, useRef, useState } from "react";
 import { AddMagnetDialog } from "./components/AddMagnetDialog";
 import { SpeedChart } from "./components/SpeedChart";
 import { Sidebar, type ViewFilter } from "./components/Sidebar";
@@ -38,6 +43,33 @@ import type { Torrent } from "./types/torrent";
 
 const DEFAULT_DOWNLOAD_FOLDER = "";
 const REFRESH_INTERVAL_MS = 1000;
+const SIDEBAR_MIN_WIDTH = 184;
+const SIDEBAR_MAX_WIDTH = 320;
+const DEFAULT_SIDEBAR_WIDTH = 228;
+const CHART_MIN_HEIGHT = 72;
+const CHART_MAX_HEIGHT = 220;
+const DEFAULT_CHART_HEIGHT = 110;
+
+type ResizeAxis = "column" | "row";
+
+interface ActiveResize {
+  axis: ResizeAxis;
+  pointerId: number;
+  startPosition: number;
+  startSize: number;
+  currentSize: number;
+}
+
+function readSizePreference(key: string, fallback: number, min: number, max: number): number {
+  try {
+    const stored = Number(localStorage.getItem(key));
+    return Number.isFinite(stored) && stored >= min && stored <= max
+      ? stored
+      : fallback;
+  } catch {
+    return fallback;
+  }
+}
 
 function readDownloadFolder(): string {
   try {
@@ -74,6 +106,89 @@ export default function App() {
   const [notice, setNotice] = useState<Notice | null>(null);
   const [runtimeAvailable] = useState(isDesktopRuntime);
   const [engineError, setEngineError] = useState<string | null>(null);
+  const [sidebarWidth, setSidebarWidth] = useState(() =>
+    readSizePreference("orbit.sidebarWidth", DEFAULT_SIDEBAR_WIDTH, SIDEBAR_MIN_WIDTH, SIDEBAR_MAX_WIDTH),
+  );
+  const [chartHeight, setChartHeight] = useState(() =>
+    readSizePreference("orbit.chartHeight", DEFAULT_CHART_HEIGHT, CHART_MIN_HEIGHT, CHART_MAX_HEIGHT),
+  );
+  const [resizeAxis, setResizeAxis] = useState<ResizeAxis | null>(null);
+  const activeResize = useRef<ActiveResize | null>(null);
+
+  function persistSize(key: string, value: number) {
+    try {
+      localStorage.setItem(key, String(value));
+    } catch {
+      // Resizing still works for this run when browser storage is unavailable.
+    }
+  }
+
+  function beginResize(axis: ResizeAxis, event: ReactPointerEvent<HTMLDivElement>, size: number) {
+    if (event.button !== 0) return;
+    event.preventDefault();
+    event.currentTarget.setPointerCapture(event.pointerId);
+    activeResize.current = {
+      axis,
+      pointerId: event.pointerId,
+      startPosition: axis === "column" ? event.clientX : event.clientY,
+      startSize: size,
+      currentSize: size,
+    };
+    setResizeAxis(axis);
+  }
+
+  function moveResize(event: ReactPointerEvent<HTMLDivElement>) {
+    const resize = activeResize.current;
+    if (!resize || resize.pointerId !== event.pointerId) return;
+    const position = resize.axis === "column" ? event.clientX : event.clientY;
+    const delta = resize.axis === "column"
+      ? position - resize.startPosition
+      : resize.startPosition - position;
+
+    if (resize.axis === "column") {
+      resize.currentSize = Math.min(
+        SIDEBAR_MAX_WIDTH,
+        Math.max(SIDEBAR_MIN_WIDTH, resize.startSize + delta),
+      );
+      setSidebarWidth(resize.currentSize);
+    } else {
+      resize.currentSize = Math.min(
+        CHART_MAX_HEIGHT,
+        Math.max(CHART_MIN_HEIGHT, resize.startSize + delta),
+      );
+      setChartHeight(resize.currentSize);
+    }
+  }
+
+  function finishResize(event: ReactPointerEvent<HTMLDivElement>) {
+    const resize = activeResize.current;
+    if (!resize || resize.pointerId !== event.pointerId) return;
+    persistSize(
+      resize.axis === "column" ? "orbit.sidebarWidth" : "orbit.chartHeight",
+      resize.currentSize,
+    );
+    activeResize.current = null;
+    setResizeAxis(null);
+  }
+
+  function resizeByKeyboard(axis: ResizeAxis, event: ReactKeyboardEvent<HTMLDivElement>) {
+    const current = axis === "column" ? sidebarWidth : chartHeight;
+    const min = axis === "column" ? SIDEBAR_MIN_WIDTH : CHART_MIN_HEIGHT;
+    const max = axis === "column" ? SIDEBAR_MAX_WIDTH : CHART_MAX_HEIGHT;
+    const increaseKey = axis === "column" ? "ArrowRight" : "ArrowUp";
+    const decreaseKey = axis === "column" ? "ArrowLeft" : "ArrowDown";
+    let next: number;
+    if (event.key === increaseKey) next = Math.min(max, current + 12);
+    else if (event.key === decreaseKey) next = Math.max(min, current - 12);
+    else if (event.key === "Home") next = min;
+    else if (event.key === "End") next = max;
+    else return;
+
+    event.preventDefault();
+    if (axis === "column") setSidebarWidth(next);
+    else setChartHeight(next);
+    persistSize(axis === "column" ? "orbit.sidebarWidth" : "orbit.chartHeight", next);
+  }
 
   const notify = useCallback((message: string, kind: Notice["kind"] = "success") => {
     setNotice({ message, kind });
@@ -385,7 +500,13 @@ export default function App() {
     torrents.find((torrent) => torrent.id === selectedTorrent?.id) ?? null;
 
   return (
-    <div className="app-shell">
+    <div
+      className={`app-shell ${resizeAxis ? `resizing-${resizeAxis}` : ""}`}
+      style={{
+        "--sidebar-width": `${sidebarWidth}px`,
+        "--chart-height": `${chartHeight}px`,
+      } as CSSProperties}
+    >
       <Sidebar
         filter={filter}
         onFilterChange={(next) => {
@@ -395,6 +516,26 @@ export default function App() {
         onSettings={() => setSettingsOpen(true)}
         settingsOpen={settingsOpen}
         torrents={torrents}
+      />
+      <div
+        aria-label="Ширина боковой панели"
+        aria-orientation="vertical"
+        aria-valuemax={SIDEBAR_MAX_WIDTH}
+        aria-valuemin={SIDEBAR_MIN_WIDTH}
+        aria-valuenow={sidebarWidth}
+        className="resize-handle column-resizer"
+        onKeyDown={(event) => resizeByKeyboard("column", event)}
+        onLostPointerCapture={() => {
+          activeResize.current = null;
+          setResizeAxis(null);
+        }}
+        onPointerCancel={finishResize}
+        onPointerDown={(event) => beginResize("column", event, sidebarWidth)}
+        onPointerMove={moveResize}
+        onPointerUp={finishResize}
+        role="separator"
+        tabIndex={0}
+        title="Потяните, чтобы изменить ширину боковой панели"
       />
       <main className="main-panel">
         {settingsOpen ? (
@@ -612,37 +753,59 @@ export default function App() {
                 </div>
               )}
             </div>
-            <footer className="status-bar">
-              <div className="status-metric">
-                <ArrowDownToLine size={14} />
-                <span>↓ {formatBytes(totals.download)}/с</span>
-              </div>
-              <div className="status-metric">
-                <ArrowUpFromLine size={14} />
-                <span>↑ {formatBytes(totals.upload)}/с</span>
-              </div>
-              <span className="status-separator" />
-              <div className="status-metric">
-                <ActivityIcon />
-                <span>{totals.active} активных</span>
-              </div>
-              <SpeedChart
-                downloadSpeed={totals.download}
-                enabled={runtimeAvailable && !engineError}
-                uploadSpeed={totals.upload}
+            <div className="bottom-dock">
+              <div
+                aria-label="Высота панели графика"
+                aria-orientation="horizontal"
+                aria-valuemax={CHART_MAX_HEIGHT}
+                aria-valuemin={CHART_MIN_HEIGHT}
+                aria-valuenow={chartHeight}
+                className="resize-handle chart-resizer"
+                onKeyDown={(event) => resizeByKeyboard("row", event)}
+                onLostPointerCapture={() => {
+                  activeResize.current = null;
+                  setResizeAxis(null);
+                }}
+                onPointerCancel={finishResize}
+                onPointerDown={(event) => beginResize("row", event, chartHeight)}
+                onPointerMove={moveResize}
+                onPointerUp={finishResize}
+                role="separator"
+                tabIndex={0}
+                title="Потяните, чтобы изменить высоту панели графика"
               />
-              <div className="status-bar-spacer" />
-              <div className="status-engine">
-                <span className={`status-engine-dot ${engineError ? "error" : ""}`} />
-                <span>
-                  {engineError
-                    ? "Ошибка движка"
-                    : runtimeAvailable
-                      ? "librqbit"
-                      : "Браузерный просмотр"}
-                </span>
-              </div>
-            </footer>
+              <footer className="status-bar">
+                <div className="status-metric">
+                  <ArrowDownToLine size={14} />
+                  <span>↓ {formatBytes(totals.download)}/с</span>
+                </div>
+                <div className="status-metric">
+                  <ArrowUpFromLine size={14} />
+                  <span>↑ {formatBytes(totals.upload)}/с</span>
+                </div>
+                <span className="status-separator" />
+                <div className="status-metric">
+                  <ActivityIcon />
+                  <span>{totals.active} активных</span>
+                </div>
+                <SpeedChart
+                  downloadSpeed={totals.download}
+                  enabled={runtimeAvailable && !engineError}
+                  uploadSpeed={totals.upload}
+                />
+                <div className="status-bar-spacer" />
+                <div className="status-engine">
+                  <span className={`status-engine-dot ${engineError ? "error" : ""}`} />
+                  <span>
+                    {engineError
+                      ? "Ошибка движка"
+                      : runtimeAvailable
+                        ? "librqbit"
+                        : "Браузерный просмотр"}
+                  </span>
+                </div>
+              </footer>
+            </div>
           </>
         )}
       </main>
